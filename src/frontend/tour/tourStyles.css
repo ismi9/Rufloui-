@@ -1,0 +1,116 @@
+@import "driver.js/dist/driver.css";
+
+/* ── Dark theme (RuFloUI is always dark) ─────────────────────────── */
+
+.driver-popover {
+  background: #1e293b;
+  color: #f1f5f9;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.4), 0 8px 10px -6px rgb(0 0 0 / 0.3);
+  max-width: 380px;
+  padding: 20px;
+}
+
+.driver-popover .driver-popover-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #f1f5f9;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.driver-popover .driver-popover-description {
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.driver-popover .driver-popover-progress-text {
+  font-size: 11px;
+  color: #64748b;
+}
+
+/* Buttons */
+.driver-popover .driver-popover-footer {
+  margin-top: 16px;
+  gap: 8px;
+}
+
+.driver-popover .driver-popover-prev-btn,
+.driver-popover .driver-popover-next-btn,
+.driver-popover .driver-popover-close-btn-text {
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.4;
+  text-shadow: none;
+}
+
+.driver-popover .driver-popover-prev-btn {
+  background: transparent;
+  color: #94a3b8;
+  border: 1px solid #475569;
+}
+
+.driver-popover .driver-popover-prev-btn:hover {
+  background: #334155;
+  color: #cbd5e1;
+}
+
+.driver-popover .driver-popover-next-btn,
+.driver-popover .driver-popover-close-btn-text {
+  background: #3b82f6;
+  color: #ffffff;
+  border: none;
+  box-shadow: 0 1px 3px rgb(59 130 246 / 0.3);
+}
+
+.driver-popover .driver-popover-next-btn:hover,
+.driver-popover .driver-popover-close-btn-text:hover {
+  background: #2563eb;
+  box-shadow: 0 2px 8px rgb(59 130 246 / 0.4);
+}
+
+/* Close X button */
+.driver-popover .driver-popover-close-btn {
+  color: #64748b;
+}
+
+.driver-popover .driver-popover-close-btn:hover {
+  color: #f1f5f9;
+}
+
+/* Overlay */
+.driver-overlay {
+  background: rgba(0, 0, 0, 0.7) !important;
+}
+
+/* Highlighted element */
+.driver-active-element {
+  transition: outline 0.2s ease;
+}
+
+/* Arrow */
+.driver-popover .driver-popover-arrow {
+  border-color: #1e293b;
+}
+
+.driver-popover-arrow-side-left .driver-popover-arrow {
+  border-left-color: #1e293b;
+}
+
+.driver-popover-arrow-side-right .driver-popover-arrow {
+  border-right-color: #1e293b;
+}
+
+.driver-popover-arrow-side-top .driver-popover-arrow {
+  border-top-color: #1e293b;
+}
+
+.driver-popover-arrow-side-bottom .driver-popover-arrow {
+  border-bottom-color: #1e293b;
+}
