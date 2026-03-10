@@ -1,8 +1,15 @@
 {
-  "name": "rufloui",
+  "name": "@mario-pb/rufloui",
   "version": "0.2.0",
   "description": "React 19 dashboard for claude-flow v3 multi-agent orchestration",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Mario-PB/rufloui.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
