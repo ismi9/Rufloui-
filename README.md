@@ -52,6 +52,21 @@ This starts:
 
 The frontend proxies `/api/*` and `/ws` to the backend automatically.
 
+### Install via GitHub Packages
+
+RuFloUI is also available as an npm package on GitHub Packages:
+
+```bash
+# Configure npm to use GitHub Packages for the @mario-pb scope
+echo "@mario-pb:registry=https://npm.pkg.github.com" >> .npmrc
+
+# Install the package
+npm install @mario-pb/rufloui
+```
+
+> **Note:** You need a GitHub personal access token with `read:packages` scope.
+> Add it to your `~/.npmrc`: `//npm.pkg.github.com/:_authToken=YOUR_TOKEN`
+
 ### Individual Services
 
 ```bash
