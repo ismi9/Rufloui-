@@ -820,7 +820,7 @@ async function launchSwarmPipeline(
         args.push(...mcpArgs)
         args.push('--append-system-prompt', systemPrompt)
       }
-      const proc = spawn(claudePath, args, { cwd: process.cwd(), env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+      const proc = spawn(claudePath, args, { cwd: task.cwd || process.cwd(), env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
 
       runningProcesses.set(`${taskId}-${agentId || 'main'}`, proc)
       trackProcessActivity(`${taskId}-${agentId || 'main'}`)
@@ -1080,7 +1080,7 @@ function launchViaSwarmCli(
     '--objective', sanitizeShellArg(taskDesc),
     '--max-agents', String(maxAgents),
     '--strategy', strategy,
-  ], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], shell: true, windowsHide: true })
+  ], { cwd: task.cwd || process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], shell: true, windowsHide: true })
 
   runningProcesses.set(taskId, proc)
   trackProcessActivity(taskId)
@@ -1293,7 +1293,7 @@ function launchViaClaude(
     ...mcpArgs,
     '--append-system-prompt', swarmPrompt,
   ]
-  const proc = spawn(claudePath, claudeArgs, { cwd: process.cwd(), env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+  const proc = spawn(claudePath, claudeArgs, { cwd: task.cwd || process.cwd(), env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
 
   startMonitoring(sessionUUID, taskId, broadcast)
   runningProcesses.set(taskId, proc)
@@ -1790,6 +1790,8 @@ interface TaskRecord {
   id: string; title: string; description: string; status: string
   priority: string; assignedTo?: string; createdAt: string; startedAt?: string; completedAt?: string; result?: string
   sessionUUID?: string; swarmRunId?: string
+  /** Working directory for claude -p processes */
+  cwd?: string
 }
 const taskStore: Map<string, TaskRecord> = new Map()
 
@@ -1811,7 +1813,7 @@ function taskRoutes(): Router {
     res.json({ tasks: [...taskStore.values()] })
   }))
   r.post('/', h(async (req, res) => {
-    const { title, description, priority, assignTo } = req.body || {}
+    const { title, description, priority, assignTo, cwd } = req.body || {}
     // Create via CLI to get a proper ID
     let taskId = `task-${Date.now()}`
     try {
@@ -1823,6 +1825,10 @@ function taskRoutes(): Router {
     } catch (e) {
       console.log('[cli] ID from CLI unavailable, using generated:', e instanceof Error ? e.message : String(e))
     }
+    // Validate cwd if provided
+    const resolvedCwd = cwd && typeof cwd === 'string' && cwd.trim()
+      ? (fs.existsSync(cwd.trim()) ? cwd.trim() : undefined)
+      : undefined
     const task: TaskRecord = {
       id: taskId,
       title: title || 'Untitled',
@@ -1832,6 +1838,7 @@ function taskRoutes(): Router {
       assignedTo: assignTo || undefined,
       createdAt: new Date().toISOString(),
       startedAt: assignTo ? new Date().toISOString() : undefined,
+      cwd: resolvedCwd,
     }
     taskStore.set(taskId, task)
     broadcast('task:added', task)
@@ -1878,6 +1885,25 @@ function taskRoutes(): Router {
     if (task) {
       task.status = 'cancelled'
       broadcast('task:updated', { ...task, id })
+
+      // Kill running processes for this task
+      for (const [key, proc] of runningProcesses.entries()) {
+        if (key.startsWith(id) && !proc.killed) {
+          proc.kill('SIGTERM')
+          setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL') }, 5000)
+          cleanupProcess(key)
+        }
+      }
+
+      // Cancel linked workflow
+      for (const [wfId, wf] of workflowStore.entries()) {
+        if (wf.taskId === id && wf.status !== 'completed' && wf.status !== 'cancelled') {
+          wf.status = 'cancelled'
+          wf.completedAt = new Date().toISOString()
+          wf.steps.forEach(s => { if (s.status === 'running' || s.status === 'pending') s.status = 'cancelled' })
+          broadcast('workflow:updated', wf)
+        }
+      }
     }
     res.json({ id, cancelled: true })
   }))
@@ -2364,7 +2390,38 @@ function workflowRoutes(): Router {
     res.json({ raw, ...parseCliOutput(raw) as object })
   }))
   r.post('/:id/cancel', h(async (req, res) => {
-    const { raw } = await execCli('workflow', ['cancel', String(req.params.id)])
+    const id = String(req.params.id)
+    const wf = workflowStore.get(id)
+
+    // Try CLI cancel (may fail for locally-created workflows)
+    let raw = ''
+    try { raw = (await execCli('workflow', ['cancel', id])).raw } catch { /* local workflow */ }
+
+    // Always update local workflowStore
+    if (wf && wf.status !== 'completed' && wf.status !== 'cancelled') {
+      wf.status = 'cancelled'
+      wf.completedAt = new Date().toISOString()
+      wf.steps.forEach(s => { if (s.status === 'running' || s.status === 'pending') s.status = 'cancelled' })
+      broadcast('workflow:updated', wf)
+
+      // Also cancel the linked task and kill its processes
+      if (wf.taskId) {
+        const task = taskStore.get(wf.taskId)
+        if (task && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled') {
+          task.status = 'cancelled'
+          broadcast('task:updated', { ...task, id: wf.taskId })
+        }
+        // Kill running processes for this task
+        for (const [key, proc] of runningProcesses.entries()) {
+          if (key.startsWith(wf.taskId) && !proc.killed) {
+            proc.kill('SIGTERM')
+            setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL') }, 5000)
+            cleanupProcess(key)
+          }
+        }
+      }
+    }
+
     res.json({ raw, cancelled: true })
   }))
   r.post('/:id/pause', h(async (req, res) => {
@@ -2376,7 +2433,16 @@ function workflowRoutes(): Router {
     res.json({ raw, resumed: true })
   }))
   r.delete('/:id', h(async (req, res) => {
-    const { raw } = await execCli('workflow', ['delete', String(req.params.id)])
+    const id = String(req.params.id)
+
+    // Try CLI delete
+    let raw = ''
+    try { raw = (await execCli('workflow', ['delete', id])).raw } catch { /* local workflow */ }
+
+    // Always remove from local store
+    workflowStore.delete(id)
+    broadcast('workflow:updated', { id, deleted: true })
+
     res.json({ raw, deleted: true })
   }))
   return r

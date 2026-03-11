@@ -107,7 +107,7 @@ export const api = {
 
   tasks: {
     list: () => request('/tasks'),
-    create: (opts: { title: string; description: string; priority?: string; assignTo?: string }) =>
+    create: (opts: { title: string; description: string; priority?: string; assignTo?: string; cwd?: string }) =>
       request('/tasks', { method: 'POST', body: JSON.stringify(opts) }),
     status: (id: string) => request(`/tasks/${id}/status`),
     assign: (id: string, agentId: string) =>

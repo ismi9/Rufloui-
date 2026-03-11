@@ -219,6 +219,9 @@ function TaskCard({
           {task.description && (
             <div style={s.detailRow}><span style={s.detailLabel}>Description:</span>{task.description}</div>
           )}
+          {(task as any).cwd && (
+            <div style={s.detailRow}><span style={s.detailLabel}>CWD:</span><code style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{(task as any).cwd}</code></div>
+          )}
           {task.result && task.status !== 'failed' && (
             <div style={{ ...s.detailRow, maxHeight: 200, overflowY: 'auto' }}>
               <span style={s.detailLabel}>Result:</span>
@@ -308,6 +311,7 @@ export default function TasksPanel() {
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<string>('normal')
   const [assignTo, setAssignTo] = useState('')
+  const [cwd, setCwd] = useState('')
   const [creating, setCreating] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [summary, setSummary] = useState<TaskSummary | null>(null)
@@ -397,11 +401,13 @@ export default function TasksPanel() {
         description: description.trim(),
         priority,
         ...(assignTo ? { assignTo } : {}),
+        ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
       })
       setTitle('')
       setDescription('')
       setPriority('normal')
       setAssignTo('')
+      setCwd('')
       fetchData()
     } catch { /* silent */ }
     setCreating(false)
@@ -446,6 +452,12 @@ export default function TasksPanel() {
                   {swarmActive && <option value="swarm">Swarm (Coordinator)</option>}
                   {agents.map((a) => <option key={a.id} value={a.id}>{a.name} ({a.type})</option>)}
                 </select>
+              </div>
+              <div style={s.formFull}>
+                <label style={s.label}>Working Directory</label>
+                <input style={{ ...s.input, fontFamily: 'monospace', fontSize: '0.85rem' }}
+                  placeholder="C:\Projects\my-app (optional — defaults to server CWD)"
+                  value={cwd} onChange={(e) => setCwd(e.target.value)} />
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-end' }} data-tour="task-create">
                 <Button onClick={handleCreate} loading={creating} disabled={!title.trim()}>

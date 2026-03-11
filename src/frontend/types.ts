@@ -36,6 +36,8 @@ export interface Task {
   createdAt: string
   completedAt?: string
   result?: string
+  /** Working directory for agent execution */
+  cwd?: string
 }
 
 export interface MemoryEntry {
