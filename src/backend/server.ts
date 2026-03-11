@@ -9,6 +9,7 @@ import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
 import { startMonitoring, stopMonitoring, getSessionTree, getAllMonitoredSessions, getNodeLogs } from './jsonl-monitor'
+import { initTelegramBot, TelegramConfig, TelegramHandle } from './telegram-bot'
 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
@@ -18,6 +19,60 @@ const CLI_PARTS = (process.env.RUFLO_CLI || 'npx -y @claude-flow/cli@latest').sp
 const CLI_BIN = CLI_PARTS[0]
 const CLI_BASE_ARGS = CLI_PARTS.slice(1)
 const CLI_TIMEOUT = Number(process.env.RUFLO_CLI_TIMEOUT) || 30_000
+let telegramBot: TelegramHandle | null = null
+let telegramConfig: TelegramConfig = {
+  enabled: false, token: '', chatId: '',
+  notifications: { taskCompleted: true, taskFailed: true, swarmInit: true, swarmShutdown: true, agentError: true, taskProgress: false },
+}
+
+interface TelegramLogEntry { timestamp: string; direction: 'in' | 'out'; message: string }
+const telegramActivityLog: TelegramLogEntry[] = []
+function addTelegramLog(direction: 'in' | 'out', message: string) {
+  telegramActivityLog.push({ timestamp: new Date().toISOString(), direction, message })
+  if (telegramActivityLog.length > 50) telegramActivityLog.shift()
+}
+const TELEGRAM_CONFIG_FILE = () => path.join(PERSIST_DIR, 'telegram.json')
+
+function loadTelegramConfig(): TelegramConfig {
+  try {
+    const filePath = TELEGRAM_CONFIG_FILE()
+    if (fs.existsSync(filePath)) {
+      const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+      return {
+        enabled: raw.enabled === true,
+        token: String(raw.token || ''),
+        chatId: String(raw.chatId || ''),
+        notifications: {
+          taskCompleted: raw.notifications?.taskCompleted ?? true,
+          taskFailed: raw.notifications?.taskFailed ?? true,
+          swarmInit: raw.notifications?.swarmInit ?? true,
+          swarmShutdown: raw.notifications?.swarmShutdown ?? true,
+          agentError: raw.notifications?.agentError ?? true,
+          taskProgress: raw.notifications?.taskProgress ?? false,
+        },
+      }
+    }
+  } catch { /* ignore */ }
+  // Fall back to env vars
+  return {
+    enabled: process.env.TELEGRAM_ENABLED === 'true',
+    token: process.env.TELEGRAM_BOT_TOKEN || '',
+    chatId: process.env.TELEGRAM_CHAT_ID || '',
+    notifications: { taskCompleted: true, taskFailed: true, swarmInit: true, swarmShutdown: true, agentError: true, taskProgress: false },
+  }
+}
+
+function saveTelegramConfig(config: TelegramConfig) {
+  try {
+    ensurePersistDir()
+    const filePath = TELEGRAM_CONFIG_FILE()
+    fs.writeFileSync(filePath, JSON.stringify(config, null, 2))
+    // Restrict file permissions (owner-only read/write) to protect the token
+    try { fs.chmodSync(filePath, 0o600) } catch { /* Windows may not support chmod */ }
+  } catch (err) {
+    console.error('[telegram] Config save failed:', err)
+  }
+}
 const ZOMBIE_TIMEOUT = Number(process.env.RUFLO_ZOMBIE_TIMEOUT) || 300_000 // 5 min
 let SKIP_PERMISSIONS = process.env.RUFLOUI_SKIP_PERMISSIONS !== 'false'
 
@@ -209,6 +264,8 @@ function broadcast(type: string, payload: unknown) {
       if (line) appendTaskOutputLine(p.id, { type: p.type || 'text', content: line, agentId: p.agentId, tool: p.tool })
     }
   }
+  // Forward to Telegram bot (fire-and-forget)
+  telegramBot?.onBroadcast(type, payload)
 }
 
 // Remove shell metacharacters that could enable injection in spawn(..., { shell: true }) calls
@@ -2391,6 +2448,61 @@ function configRoutes(): Router {
     }
     res.json({ skipPermissions: SKIP_PERMISSIONS })
   })
+  // ── Telegram bot settings ──────────────────────────────────────────
+  r.get('/telegram', (_req, res) => {
+    const status = telegramBot?.getStatus()
+    res.json({
+      enabled: telegramConfig.enabled,
+      connected: status?.connected ?? false,
+      botUsername: status?.botUsername ?? null,
+      hasToken: !!telegramConfig.token,
+      hasChatId: !!telegramConfig.chatId,
+      // Mask token for security — only show last 4 chars
+      tokenPreview: telegramConfig.token ? '...' + telegramConfig.token.slice(-4) : '',
+      chatId: telegramConfig.chatId || '',
+      notifications: telegramConfig.notifications,
+    })
+  })
+  r.put('/telegram', h(async (req, res) => {
+    const { enabled, token, chatId } = req.body || {}
+    if (typeof enabled === 'boolean') telegramConfig.enabled = enabled
+    if (typeof token === 'string') telegramConfig.token = token
+    if (typeof chatId === 'string') telegramConfig.chatId = chatId
+    if (req.body.notifications && typeof req.body.notifications === 'object') {
+      const allowed = ['taskCompleted', 'taskFailed', 'swarmInit', 'swarmShutdown', 'agentError', 'taskProgress'] as const
+      for (const key of allowed) {
+        if (typeof req.body.notifications[key] === 'boolean') {
+          telegramConfig.notifications[key] = req.body.notifications[key]
+        }
+      }
+    }
+    saveTelegramConfig(telegramConfig)
+    await reinitTelegramBot()
+    // Wait briefly for connection attempt
+    await new Promise(r => setTimeout(r, 1500))
+    const status = telegramBot?.getStatus()
+    res.json({
+      enabled: telegramConfig.enabled,
+      connected: status?.connected ?? false,
+      botUsername: status?.botUsername ?? null,
+      hasToken: !!telegramConfig.token,
+      hasChatId: !!telegramConfig.chatId,
+      tokenPreview: telegramConfig.token ? '...' + telegramConfig.token.slice(-4) : '',
+      chatId: telegramConfig.chatId || '',
+      notifications: telegramConfig.notifications,
+    })
+  }))
+  r.post('/telegram/test', h(async (_req, res) => {
+    if (!telegramBot) {
+      res.json({ ok: false, error: 'Bot is not connected' })
+      return
+    }
+    const result = await telegramBot.sendTest()
+    res.json(result)
+  }))
+  r.get('/telegram/log', (_req, res) => {
+    res.json({ log: telegramActivityLog })
+  })
   r.get('/:key', h(async (req, res) => {
     const { raw } = await execCli('config', ['get', String(req.params.key)])
     res.json({ raw, key: String(req.params.key) })
@@ -2640,6 +2752,70 @@ wss.on('connection', (ws) => {
 
 // Load persisted state before listening
 loadFromDisk()
+
+// Initialize Telegram bot (no-op when not configured)
+function getTelegramStores() {
+  return {
+    taskStore, workflowStore, agentRegistry, terminatedAgents, agentActivity,
+    getSwarmStatus: () => ({
+      id: lastSwarmId,
+      topology: lastSwarmTopology,
+      status: swarmShutdown ? 'shutdown' : 'active',
+      activeAgents: currentSwarmAgentIds.size,
+    }),
+    getSystemHealth: async () => {
+      try {
+        const { raw } = await execCli('doctor')
+        const passed = Number(raw.match(/(\d+) passed/)?.[1] ?? 0)
+        const warnings = Number(raw.match(/(\d+) warning/)?.[1] ?? 0)
+        return { status: warnings > 3 ? 'degraded' : 'healthy', passed, warnings }
+      } catch {
+        return { status: 'unknown', passed: 0, warnings: 0 }
+      }
+    },
+    createAndAssignTask: async (title: string, description: string) => {
+      const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const task = {
+        id, title, description, status: 'pending',
+        priority: 'medium', createdAt: new Date().toISOString(),
+      }
+      taskStore.set(id, task)
+      broadcast('task:added', task)
+      if (!swarmShutdown) {
+        task.status = 'in_progress'
+        const startedAt = new Date().toISOString()
+        Object.assign(task, { startedAt })
+        broadcast('task:updated', { ...task, id })
+        launchWorkflowForTask(id, task.title, task.description)
+        return { taskId: id, assigned: true }
+      }
+      return { taskId: id, assigned: false }
+    },
+    cancelTask: async (taskId: string) => {
+      const task = taskStore.get(taskId)
+      if (!task) return { ok: false, error: 'Task not found' }
+      if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+        return { ok: false, error: `Task already ${task.status}` }
+      }
+      task.status = 'cancelled'
+      task.completedAt = new Date().toISOString()
+      broadcast('task:updated', { ...task, id: taskId })
+      return { ok: true }
+    },
+    addLog: addTelegramLog,
+  }
+}
+
+async function reinitTelegramBot() {
+  if (telegramBot) {
+    await telegramBot.stop()
+    telegramBot = null
+  }
+  telegramBot = initTelegramBot(telegramConfig, getTelegramStores())
+}
+
+telegramConfig = loadTelegramConfig()
+telegramBot = initTelegramBot(telegramConfig, getTelegramStores())
 
 // Periodic save as safety net (every 30s)
 setInterval(() => saveToDisk(), 30_000)

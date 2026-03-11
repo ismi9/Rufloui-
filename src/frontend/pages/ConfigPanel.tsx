@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback } from 'react'
-import { api } from '@/api'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { api, TelegramStatus } from '@/api'
 import { useStore } from '@/store'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-import { ShieldAlert } from 'lucide-react'
+import { ShieldAlert, Send } from 'lucide-react'
 
 interface ConfigEntry {
   key: string
@@ -41,11 +41,26 @@ export default function ConfigPanel() {
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [loading, setLoading] = useState('')
   const [skipPermissions, setSkipPermissions] = useState<boolean | null>(null)
+  const [telegram, setTelegram] = useState<TelegramStatus | null>(null)
+  const [tgToken, setTgToken] = useState('')
+  const [tgChatId, setTgChatId] = useState('')
+  const [tgSaving, setTgSaving] = useState(false)
+  const [tgEditing, setTgEditing] = useState(false)
+  const [tgTestMsg, setTgTestMsg] = useState('')
+  const [tgLog, setTgLog] = useState<Array<{ timestamp: string; direction: 'in' | 'out'; message: string }>>([])
+  const logIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchServerSettings = useCallback(async () => {
     try {
       const data = await api.config.getServerSettings()
       setSkipPermissions(data.skipPermissions)
+    } catch {
+      // endpoint may not exist on older backends
+    }
+    try {
+      const tg = await api.config.getTelegramStatus()
+      setTelegram(tg)
+      setTgChatId(tg.chatId || '')
     } catch {
       // endpoint may not exist on older backends
     }
@@ -75,10 +90,31 @@ export default function ConfigPanel() {
     }
   }, [addLog])
 
+  const fetchTelegramLog = useCallback(async () => {
+    try {
+      const data = await api.config.getTelegramLog()
+      setTgLog(data.log || [])
+    } catch { /* ignore */ }
+  }, [])
+
   useEffect(() => {
     fetchConfigs()
     fetchServerSettings()
   }, [fetchConfigs, fetchServerSettings])
+
+  // Poll telegram activity log every 10s when bot is enabled/connected
+  useEffect(() => {
+    if (telegram?.enabled || telegram?.connected) {
+      fetchTelegramLog()
+      logIntervalRef.current = setInterval(fetchTelegramLog, 10_000)
+    }
+    return () => {
+      if (logIntervalRef.current) {
+        clearInterval(logIntervalRef.current)
+        logIntervalRef.current = null
+      }
+    }
+  }, [telegram?.enabled, telegram?.connected, fetchTelegramLog])
 
   const startEdit = (entry: ConfigEntry) => {
     setEditingKey(entry.key)
@@ -252,6 +288,307 @@ export default function ConfigPanel() {
                 }} />
               </button>
             </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Telegram Bot */}
+      {telegram && (
+        <Card>
+          <div style={{ padding: '20px 24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
+                Telegram Bot
+              </div>
+              <div style={{
+                padding: '4px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+                background: telegram.connected ? 'var(--accent-green)' : telegram.enabled ? 'var(--accent-red)' : 'var(--text-muted)',
+                color: '#fff',
+              }}>
+                {telegram.connected ? 'ONLINE' : telegram.enabled ? 'ERROR' : 'OFF'}
+              </div>
+            </div>
+
+            {/* Status banner */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '14px 16px', borderRadius: 'var(--radius)', marginBottom: 16,
+              background: telegram.connected
+                ? 'rgba(34, 197, 94, 0.08)'
+                : telegram.enabled
+                  ? 'rgba(239, 68, 68, 0.08)'
+                  : 'rgba(148, 163, 184, 0.08)',
+              border: `1px solid ${telegram.connected
+                ? 'rgba(34, 197, 94, 0.2)'
+                : telegram.enabled
+                  ? 'rgba(239, 68, 68, 0.2)'
+                  : 'rgba(148, 163, 184, 0.2)'}`,
+            }}>
+              <Send size={20} color={telegram.connected ? 'var(--accent-green)' : 'var(--text-muted)'} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {telegram.connected
+                    ? `Connected as @${telegram.botUsername || '...'}`
+                    : telegram.enabled
+                      ? `Not connected — ${!telegram.hasToken ? 'missing token' : !telegram.hasChatId ? 'missing chat ID' : 'connection failed'}`
+                      : 'Disabled — configure below to enable'}
+                </div>
+                {telegram.connected && (
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
+                    Receiving commands and sending notifications to chat {telegram.chatId}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Enable/Disable toggle */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 0', borderBottom: '1px solid var(--border)',
+            }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Enable Telegram Bot</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                  Activate polling and notifications
+                </div>
+              </div>
+              <button
+                disabled={tgSaving}
+                onClick={async () => {
+                  setTgSaving(true)
+                  setTgTestMsg('')
+                  try {
+                    const next = !telegram.enabled
+                    const res = await api.config.setTelegramConfig({ enabled: next })
+                    setTelegram(res)
+                    addLog({ level: 'info', message: `Telegram bot ${next ? 'enabled' : 'disabled'}`, source: 'config' })
+                  } catch (err) {
+                    addLog({ level: 'error', message: `Telegram toggle failed: ${(err as Error).message}`, source: 'config' })
+                  } finally {
+                    setTgSaving(false)
+                  }
+                }}
+                style={{
+                  position: 'relative',
+                  width: 48, height: 26, borderRadius: 13,
+                  border: 'none', cursor: tgSaving ? 'wait' : 'pointer',
+                  background: telegram.enabled ? 'var(--accent-green)' : 'var(--text-muted)',
+                  transition: 'background 0.2s ease',
+                  flexShrink: 0, opacity: tgSaving ? 0.6 : 1,
+                }}
+              >
+                <div style={{
+                  position: 'absolute',
+                  top: 3, left: telegram.enabled ? 25 : 3,
+                  width: 20, height: 20, borderRadius: '50%',
+                  background: '#fff',
+                  transition: 'left 0.2s ease',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                }} />
+              </button>
+            </div>
+
+            {/* Configuration fields */}
+            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4, display: 'block' }}>
+                  Bot Token {telegram.hasToken && !tgEditing && (
+                    <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(configured: {telegram.tokenPreview})</span>
+                  )}
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="password"
+                    value={tgToken}
+                    onChange={(e) => setTgToken(e.target.value)}
+                    onFocus={() => setTgEditing(true)}
+                    placeholder={telegram.hasToken ? 'Enter new token to change...' : 'Paste bot token from @BotFather'}
+                    style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
+                  />
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Get a token from <span style={{ fontWeight: 600 }}>@BotFather</span> on Telegram: send /newbot and follow the prompts
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4, display: 'block' }}>
+                  Chat ID
+                </label>
+                <input
+                  value={tgChatId}
+                  onChange={(e) => { setTgChatId(e.target.value); setTgEditing(true) }}
+                  placeholder="Your Telegram chat ID (e.g. 123456789)"
+                  style={{ ...inputStyle, fontFamily: 'monospace' }}
+                />
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Message <span style={{ fontWeight: 600 }}>@userinfobot</span> on Telegram to get your chat ID
+                </div>
+              </div>
+
+              {/* Save + Test buttons */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+                <Button
+                  loading={tgSaving}
+                  disabled={!tgEditing && !tgToken}
+                  onClick={async () => {
+                    setTgSaving(true)
+                    setTgTestMsg('')
+                    try {
+                      const update: { token?: string; chatId?: string; enabled?: boolean } = {}
+                      if (tgToken) update.token = tgToken
+                      if (tgChatId) update.chatId = tgChatId
+                      // Auto-enable when saving credentials
+                      if ((tgToken || telegram.hasToken) && tgChatId) update.enabled = true
+                      const res = await api.config.setTelegramConfig(update)
+                      setTelegram(res)
+                      setTgChatId(res.chatId || '')
+                      setTgToken('')
+                      setTgEditing(false)
+                      setTgTestMsg(res.connected ? 'Saved and connected!' : 'Saved but connection failed — check token and chat ID')
+                      addLog({ level: 'info', message: 'Telegram config updated', source: 'config' })
+                    } catch (err) {
+                      setTgTestMsg(`Save failed: ${(err as Error).message}`)
+                      addLog({ level: 'error', message: `Telegram save failed: ${(err as Error).message}`, source: 'config' })
+                    } finally {
+                      setTgSaving(false)
+                    }
+                  }}
+                >
+                  Save & Connect
+                </Button>
+                <Button
+                  variant="secondary"
+                  loading={tgSaving}
+                  disabled={!telegram.connected}
+                  onClick={async () => {
+                    setTgSaving(true)
+                    setTgTestMsg('')
+                    try {
+                      const res = await api.config.testTelegram()
+                      setTgTestMsg(res.ok ? 'Test message sent!' : `Test failed: ${res.error}`)
+                    } catch (err) {
+                      setTgTestMsg(`Test failed: ${(err as Error).message}`)
+                    } finally {
+                      setTgSaving(false)
+                    }
+                  }}
+                >
+                  Send Test
+                </Button>
+                {tgTestMsg && (
+                  <span style={{
+                    fontSize: 12,
+                    color: /connected|sent|Saved/i.test(tgTestMsg) ? 'var(--accent-green)' : 'var(--accent-red)',
+                  }}>
+                    {tgTestMsg}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Commands reference */}
+            {telegram.connected && (
+              <div style={{ marginTop: 16, padding: '12px 16px', borderRadius: 'var(--radius)', background: 'var(--bg-primary)' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>Available Commands</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px', fontSize: 12, fontFamily: 'monospace' }}>
+                  {[
+                    ['/status', 'System overview'],
+                    ['/agents', 'List agents'],
+                    ['/tasks', 'Tasks by status'],
+                    ['/task <id>', 'Task detail'],
+                    ['/swarm', 'Swarm info'],
+                    ['/workflows', 'List workflows'],
+                    ['/run <desc>', 'Create & run task'],
+                    ['/cancel <id>', 'Cancel a task'],
+                    ['/help', 'Command list'],
+                  ].map(([cmd, desc]) => (
+                    <div key={cmd} style={{ display: 'flex', gap: 8 }}>
+                      <span style={{ color: 'var(--accent-blue)', whiteSpace: 'nowrap' }}>{cmd}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Notifications */}
+            {(telegram.connected || telegram.enabled) && telegram.notifications && (
+              <div style={{ marginTop: 16, padding: '12px 16px', borderRadius: 'var(--radius)', background: 'var(--bg-primary)' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>Notifications</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {([
+                    ['taskCompleted', 'Task Completed'],
+                    ['taskFailed', 'Task Failed'],
+                    ['swarmInit', 'Swarm Initialized'],
+                    ['swarmShutdown', 'Swarm Shutdown'],
+                    ['agentError', 'Agent Error'],
+                    ['taskProgress', 'Task Progress'],
+                  ] as const).map(([key, label]) => (
+                    <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{label}</span>
+                      <button
+                        onClick={async () => {
+                          const newVal = !telegram.notifications[key]
+                          try {
+                            const res = await api.config.setTelegramConfig({ notifications: { [key]: newVal } })
+                            setTelegram(res)
+                          } catch (err) {
+                            addLog({ level: 'error', message: `Notification toggle failed: ${(err as Error).message}`, source: 'config' })
+                          }
+                        }}
+                        style={{
+                          position: 'relative',
+                          width: 36, height: 20, borderRadius: 10,
+                          border: 'none', cursor: 'pointer',
+                          background: telegram.notifications[key] ? 'var(--accent-green)' : 'var(--text-muted)',
+                          transition: 'background 0.2s ease',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <div style={{
+                          position: 'absolute',
+                          top: 2, left: telegram.notifications[key] ? 18 : 2,
+                          width: 16, height: 16, borderRadius: '50%',
+                          background: '#fff',
+                          transition: 'left 0.2s ease',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                        }} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Activity Log */}
+            {(telegram.connected || telegram.enabled) && (
+              <div style={{ marginTop: 16, padding: '12px 16px', borderRadius: 'var(--radius)', background: 'var(--bg-primary)' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>Activity Log</div>
+                <div style={{
+                  maxHeight: 200, overflowY: 'auto', fontSize: 12, fontFamily: 'monospace',
+                  display: 'flex', flexDirection: 'column', gap: 2,
+                }}>
+                  {tgLog.length === 0 ? (
+                    <div style={{ color: 'var(--text-muted)', padding: '8px 0' }}>No activity yet</div>
+                  ) : (
+                    [...tgLog].reverse().map((entry, i) => {
+                      const time = new Date(entry.timestamp).toLocaleTimeString()
+                      const arrow = entry.direction === 'out' ? '\u2192' : '\u2190'
+                      const color = entry.direction === 'out' ? 'var(--accent-blue)' : 'var(--accent-green)'
+                      const msg = entry.message.length > 80 ? entry.message.slice(0, 77) + '...' : entry.message
+                      return (
+                        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'baseline', lineHeight: '18px' }}>
+                          <span style={{ color, flexShrink: 0 }}>{arrow}</span>
+                          <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{time}</span>
+                          <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg}</span>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </Card>
       )}

@@ -170,6 +170,68 @@ Once the app is running, here's how to go from zero to a working multi-agent swa
 - **claude-flow CLI** — installed automatically via `npx @claude-flow/cli@latest`
 - **Claude Code CLI** (optional) — required for multi-agent pipeline execution. [Install guide](https://docs.anthropic.com/en/docs/claude-code)
 
+## Telegram Bot (Optional)
+
+Monitor and control RuFloUI from Telegram.
+
+### Setup
+
+**Option A: Via the Dashboard (recommended)**
+
+1. Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`, and follow the prompts to get a bot token.
+2. Message your new bot with `/start` to get your chat ID.
+3. Open the RuFloUI dashboard, go to **Config > Telegram Bot**.
+4. Paste the bot token and chat ID, click **Save & Connect**.
+5. Click **Send Test** to verify.
+
+**Option B: Via environment variables**
+
+```bash
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+TELEGRAM_CHAT_ID=123456789
+```
+
+Restart the backend. You should see `[telegram] Bot connected as @YourBotName` in logs.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Shows your chat ID (works for any user) |
+| `/status` | System health + swarm status + agent/task counts |
+| `/agents` | List active agents with type and status |
+| `/tasks` | Tasks grouped by status (with inline refresh) |
+| `/task <id>` | Detailed info for one task (with cancel button) |
+| `/workflows` | List workflows with status and step count |
+| `/swarm` | Swarm topology and status |
+| `/run <description>` | Create and assign a task to the swarm |
+| `/cancel <id>` | Cancel a running or pending task |
+| `/help` | List available commands |
+
+### Notifications
+
+Configurable per-type via the dashboard (Config > Telegram Bot > Notifications):
+
+| Notification | Default | Description |
+|-------------|---------|-------------|
+| Task Completed | On | Task finishes successfully |
+| Task Failed | On | Task fails with error |
+| Swarm Initialized | On | Swarm starts up |
+| Swarm Shutdown | On | Swarm stops |
+| Agent Error | On | Agent encounters an error |
+| Task Progress | Off | Progress updates (throttled to 1 per 30s per task) |
+
+### Security
+
+- Only the configured chat ID can execute commands. Other users see their chat ID via `/start` but cannot issue commands.
+- Bot token is stored in `.ruflo/telegram.json` with restricted file permissions (0600).
+- The dashboard masks the token, showing only the last 4 characters.
+
+### Disabling
+
+Set `TELEGRAM_ENABLED=false` (or remove it) and restart. The bot is completely inert when disabled.
+
 ## Contributing
 
 Contributions are welcome! Here's how you can help:

@@ -1,6 +1,6 @@
 {
   "name": "@mario-pb/rufloui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "React 19 dashboard for claude-flow v3 multi-agent orchestration",
   "repository": {
     "type": "git",
@@ -26,6 +26,7 @@
     "driver.js": "^1.4.0",
     "express": "^4.21.0",
     "lucide-react": "^0.468.0",
+    "node-telegram-bot-api": "^0.67.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.0",
@@ -40,6 +41,7 @@
     "@types/cors": "^2.8.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
+    "@types/node-telegram-bot-api": "^0.64.14",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.5.0",

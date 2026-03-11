@@ -16,6 +16,20 @@ export interface PreflightResult {
   passed: number
 }
 
+export interface TelegramStatus {
+  enabled: boolean
+  connected: boolean
+  botUsername: string | null
+  hasToken: boolean
+  hasChatId: boolean
+  tokenPreview: string
+  chatId: string
+  notifications: {
+    taskCompleted: boolean; taskFailed: boolean; swarmInit: boolean
+    swarmShutdown: boolean; agentError: boolean; taskProgress: boolean
+  }
+}
+
 const API_BASE = '/api'
 
 function addApiLog(level: string, message: string) {
@@ -208,6 +222,11 @@ export const api = {
     getServerSettings: () => request<{ skipPermissions: boolean }>('/config/server-settings'),
     setServerSettings: (settings: { skipPermissions: boolean }) =>
       request<{ skipPermissions: boolean }>('/config/server-settings', { method: 'PUT', body: JSON.stringify(settings) }),
+    getTelegramStatus: () => request<TelegramStatus>('/config/telegram'),
+    setTelegramConfig: (config: { enabled?: boolean; token?: string; chatId?: string; notifications?: Partial<TelegramStatus['notifications']> }) =>
+      request<TelegramStatus>('/config/telegram', { method: 'PUT', body: JSON.stringify(config) }),
+    testTelegram: () => request<{ ok: boolean; error?: string }>('/config/telegram/test', { method: 'POST' }),
+    getTelegramLog: () => request<{ log: Array<{ timestamp: string; direction: 'in' | 'out'; message: string }> }>('/config/telegram/log'),
   },
 
   viz: {

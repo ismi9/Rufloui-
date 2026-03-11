@@ -4,6 +4,32 @@ All notable changes to RuFloUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-03-11
+
+### Added
+
+- **Telegram Bot Integration** — Remote monitoring and control via Telegram polling bot
+  - 10 commands: `/start`, `/status`, `/agents`, `/tasks`, `/task`, `/workflows`, `/swarm`, `/run`, `/cancel`, `/help`
+  - Inline keyboard buttons on status (Agents/Tasks/Swarm), task lists (Refresh), and task detail (Cancel)
+  - Configurable notifications: task completed/failed, swarm init/shutdown, agent error, task progress
+  - Task progress updates throttled to 1 message per 30 seconds per task
+  - `/run <description>` creates and auto-assigns tasks to the swarm from Telegram
+  - `/cancel <id>` cancels running tasks from Telegram
+  - `/start` open to all users for chat ID discovery during setup
+  - Chat ID authorization — only the configured chat can execute commands
+  - Bot token stored with restricted file permissions (0600)
+  - Dashboard UI (Config > Telegram Bot) with enable toggle, token/chatId fields, Save & Connect, and Send Test
+  - Notification toggles in the dashboard for per-type control
+  - Activity log with incoming/outgoing message history (last 50 entries, polled every 10s)
+  - Auto-reconnect with exponential backoff (up to 5 attempts) on polling failures
+  - Configuration persisted to `.ruflo/telegram.json` (survives restarts without env vars)
+  - Zero overhead when disabled — returns null, no polling, no connections
+
+### Dependencies
+
+- Added `node-telegram-bot-api` (runtime)
+- Added `@types/node-telegram-bot-api` (dev)
+
 ## [0.2.0] - 2026-03-10
 
 ### Added

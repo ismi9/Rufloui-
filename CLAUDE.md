@@ -112,6 +112,8 @@ The backend is a single Express file that wraps CLI commands, manages state, and
 
 9. **Env Var Cleanup**: When spawning child `claude -p` processes, ALL env vars starting with `CLAUDE` are deleted to prevent nested session conflicts.
 
+10. **Telegram Bot** (`telegram-bot.ts`): Optional polling-based Telegram integration for remote monitoring/control. Enabled via `TELEGRAM_ENABLED=true`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Returns `null` when disabled — zero overhead. Hooks into `broadcast()` for fire-and-forget notifications.
+
 ### API Routes
 
 | Route | Methods | Description |
@@ -131,6 +133,9 @@ The backend is a single Express file that wraps CLI commands, manages state, and
 | `/api/config` | GET list, GET/PUT :key, POST reset, GET export, POST import | Configuration |
 | `/api/ai-defence` | GET stats, POST scan/analyze | AI defence |
 | `/api/swarm-monitor` | GET snapshot/activity/agents/health/metrics, GET output/:agentId, POST purge | Swarm Monitor |
+| `/api/config/telegram` | GET status, PUT update config | Telegram bot config + status |
+| `/api/config/telegram/test` | POST | Send test message to Telegram |
+| `/api/config/telegram/log` | GET | Activity log (last 50 messages) |
 | `/api/viz` | GET sessions, GET sessions/:id, GET sessions/:id/logs/:nodeId | Agent Viz (JSONL) |
 
 ### WebSocket Events
