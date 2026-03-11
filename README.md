@@ -232,6 +232,39 @@ Configurable per-type via the dashboard (Config > Telegram Bot > Notifications):
 
 Set `TELEGRAM_ENABLED=false` (or remove it) and restart. The bot is completely inert when disabled.
 
+## GitHub Webhooks (Optional)
+
+Automatically create swarm tasks when GitHub issues are opened.
+
+### Setup
+
+1. Open the RuFloUI dashboard, go to **Webhooks** in the sidebar.
+2. Click **Edit**, enable GitHub Webhooks, paste your GitHub token (needs `repo` scope).
+3. Optionally add a webhook secret and list repos to monitor.
+4. Copy the **Webhook URL** shown on the page.
+5. In your GitHub repo, go to **Settings > Webhooks > Add webhook**.
+6. Paste the URL, set content type to `application/json`, select **Issues** events.
+
+### How It Works
+
+When a new issue is opened in a monitored repo:
+
+1. GitHub sends a POST to RuFloUI's webhook endpoint
+2. RuFloUI validates the HMAC signature (if secret configured)
+3. A high-priority task is created with the issue title and body
+4. If a swarm is active, the task is auto-assigned to the multi-agent pipeline
+5. Agents investigate, code, test, and produce a result
+6. Event status updates in the Webhooks page as the task progresses
+
+### Environment Variables (alternative to dashboard)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GITHUB_WEBHOOK_ENABLED` | `false` | Enable webhook receiver |
+| `GITHUB_TOKEN` | — | GitHub PAT with `repo` scope |
+| `GITHUB_WEBHOOK_SECRET` | — | HMAC secret for signature validation |
+| `GITHUB_WEBHOOK_REPOS` | — | Comma-separated `owner/repo` list |
+
 ## Contributing
 
 Contributions are welcome! Here's how you can help:

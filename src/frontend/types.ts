@@ -208,3 +208,30 @@ export interface WSMessage {
   payload: unknown
   timestamp: string
 }
+
+export interface WebhookEvent {
+  id: string
+  provider: 'github'
+  repo: string
+  event: string
+  title: string
+  body: string
+  url: string
+  number: number
+  author: string
+  labels: string[]
+  receivedAt: string
+  taskId?: string
+  status: 'received' | 'processing' | 'completed' | 'failed' | 'ignored'
+}
+
+export interface GitHubWebhookStatus {
+  enabled: boolean
+  hasToken: boolean
+  tokenPreview: string
+  webhookSecret: string
+  hasSecret: boolean
+  repos: string[]
+  autoAssign: boolean
+  taskTemplate: string
+}

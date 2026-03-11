@@ -10,6 +10,7 @@ import fs from 'fs'
 import crypto from 'crypto'
 import { startMonitoring, stopMonitoring, getSessionTree, getAllMonitoredSessions, getNodeLogs } from './jsonl-monitor'
 import { initTelegramBot, TelegramConfig, TelegramHandle } from './telegram-bot'
+import { loadGitHubWebhookConfig, githubWebhookRoutes, updateWebhookEventByTaskId } from './webhook-github'
 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
@@ -75,6 +76,8 @@ function saveTelegramConfig(config: TelegramConfig) {
 }
 const ZOMBIE_TIMEOUT = Number(process.env.RUFLO_ZOMBIE_TIMEOUT) || 300_000 // 5 min
 let SKIP_PERMISSIONS = process.env.RUFLOUI_SKIP_PERMISSIONS !== 'false'
+
+let githubWebhookConfig = loadGitHubWebhookConfig()
 
 // ── PERSISTENCE LAYER ───────────────────────────────────────────────
 // Writes critical in-memory state to .ruflo/ as JSON files so it
@@ -266,6 +269,13 @@ function broadcast(type: string, payload: unknown) {
   }
   // Forward to Telegram bot (fire-and-forget)
   telegramBot?.onBroadcast(type, payload)
+  // Update webhook event status when linked task completes/fails
+  if (type === 'task:updated') {
+    const p2 = payload as { id?: string; status?: string }
+    if (p2?.id && (p2.status === 'completed' || p2.status === 'failed')) {
+      updateWebhookEventByTaskId(p2.id, p2.status as 'completed' | 'failed')
+    }
+  }
 }
 
 // Remove shell metacharacters that could enable injection in spawn(..., { shell: true }) calls
@@ -2702,7 +2712,12 @@ function swarmMonitorRoutes(): Router {
 // Bootstrap
 const app = express()
 app.use(cors({ origin: process.env.RUFLOUI_CORS_ORIGIN || 'http://localhost:5173' }))
-app.use(express.json())
+app.use(express.json({
+  verify: (req: any, _res, buf) => {
+    // Preserve the raw body buffer for HMAC signature verification (webhook routes)
+    req.rawBody = buf
+  },
+}))
 
 app.use('/api/system', systemRoutes())
 app.use('/api/swarm', swarmRoutes())
@@ -2719,6 +2734,27 @@ app.use('/api/coordination', coordinationRoutes())
 app.use('/api/config', configRoutes())
 app.use('/api/ai-defence', aiDefenceRoutes())
 app.use('/api/swarm-monitor', swarmMonitorRoutes())
+app.use('/api/webhooks', githubWebhookRoutes(
+  () => githubWebhookConfig,
+  (c) => { githubWebhookConfig = c },
+  {
+    createAndAssignTask: async (title: string, description: string) => {
+      const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const task = { id, title, description, status: 'pending', priority: 'high', createdAt: new Date().toISOString() } as any
+      taskStore.set(id, task)
+      broadcast('task:added', task)
+      if (!swarmShutdown) {
+        task.status = 'in_progress'
+        task.startedAt = new Date().toISOString()
+        broadcast('task:updated', { ...task, id })
+        launchWorkflowForTask(id, title, description)
+        return { taskId: id, assigned: true }
+      }
+      return { taskId: id, assigned: false }
+    },
+    broadcast,
+  },
+))
 
 // Viz routes (JSONL monitor)
 const vizRouter = Router()

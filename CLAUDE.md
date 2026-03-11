@@ -133,6 +133,7 @@ The backend is a single Express file that wraps CLI commands, manages state, and
 | `/api/config` | GET list, GET/PUT :key, POST reset, GET export, POST import | Configuration |
 | `/api/ai-defence` | GET stats, POST scan/analyze | AI defence |
 | `/api/swarm-monitor` | GET snapshot/activity/agents/health/metrics, GET output/:agentId, POST purge | Swarm Monitor |
+| `/api/webhooks` | POST github, GET/PUT github/config, GET github/events | GitHub webhook receiver + config |
 | `/api/config/telegram` | GET status, PUT update config | Telegram bot config + status |
 | `/api/config/telegram/test` | POST | Send test message to Telegram |
 | `/api/config/telegram/log` | GET | Activity log (last 50 messages) |

@@ -4,6 +4,25 @@ All notable changes to RuFloUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [0.3.1] - 2026-03-11
+
+### Added
+
+- **GitHub Webhook Integration** — Receive GitHub issue events and auto-create swarm tasks
+  - Webhook endpoint `POST /api/webhooks/github` with HMAC-SHA256 signature validation
+  - Dashboard UI (Webhooks page) with config editor, webhook URL, and event history
+  - Auto-creates high-priority tasks from new/reopened issues
+  - Auto-assigns to active swarm pipeline (researcher, coder, tester, reviewer)
+  - Configurable task instruction templates with `{{title}}`, `{{body}}`, `{{url}}`, `{{author}}`, `{{labels}}`, `{{repo}}`, `{{number}}` placeholders
+  - Body deduplication: when template includes `{{body}}`, body is not repeated in the header
+  - Event status tracking (received, processing, completed, failed) with real-time WebSocket updates
+  - "Send Test" button to simulate webhook events from the dashboard
+  - Config persisted to `.ruflo/github-webhook.json`
+  - Fallback to environment variables when no dashboard config
+  - 56 unit tests covering all webhook features
+
 ## [0.3.0] - 2026-03-11
 
 ### Added

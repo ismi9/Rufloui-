@@ -19,6 +19,7 @@ import {
   ChevronUp,
   GitBranch,
   Radio,
+  Webhook,
 } from 'lucide-react'
 import { useStore } from '@/store'
 import type { ComponentType } from 'react'
@@ -68,6 +69,7 @@ const navGroups: NavGroup[] = [
       { label: 'Workflows', to: '/workflows', icon: Workflow },
       { label: 'Hooks', to: '/hooks', icon: Terminal },
       { label: 'Sessions', to: '/sessions', icon: Save },
+      { label: 'Webhooks', to: '/webhooks', icon: Webhook },
     ],
   },
   {

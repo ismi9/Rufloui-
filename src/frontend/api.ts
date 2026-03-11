@@ -1,4 +1,5 @@
 import { useStore } from './store'
+import type { WebhookEvent, GitHubWebhookStatus } from './types'
 
 export interface PreflightCheck {
   id: string
@@ -250,6 +251,15 @@ export const api = {
       request('/ai-defence/analyze', { method: 'POST', body: JSON.stringify({ input }) }),
     scan: () => request('/ai-defence/scan'),
     stats: () => request('/ai-defence/stats'),
+  },
+
+  webhooks: {
+    getGitHubConfig: () => request<GitHubWebhookStatus>('/webhooks/github/config'),
+    setGitHubConfig: (config: Record<string, unknown>) =>
+      request('/webhooks/github/config', { method: 'PUT', body: JSON.stringify(config) }),
+    getGitHubEvents: () => request<WebhookEvent[]>('/webhooks/github/events'),
+    testGitHub: () => request<{ ok: boolean; eventId?: string; taskId?: string; error?: string }>(
+      '/webhooks/github/test', { method: 'POST' }),
   },
 }
 

@@ -22,6 +22,7 @@ const ConfigPanel = React.lazy(() => import('./pages/ConfigPanel'))
 const LogsPanel = React.lazy(() => import('./pages/LogsPanel'))
 const AgentVizPanel = React.lazy(() => import('./pages/AgentVizPanel'))
 const SwarmMonitorPanel = React.lazy(() => import('./pages/SwarmMonitorPanel'))
+const WebhooksPanel = React.lazy(() => import('./pages/WebhooksPanel'))
 
 function LoadingSpinner() {
   return (
@@ -206,6 +207,10 @@ export function App() {
             )
             s.setSwarmMonitor({ ...s.swarmMonitor, agents: updatedAgents })
           }
+          break
+        case 'webhook:received':
+        case 'webhook:updated':
+          window.dispatchEvent(new CustomEvent('webhook-event', { detail: payload }))
           break
         case 'log':
           s.addLog(payload as Parameters<typeof s.addLog>[0])
@@ -414,6 +419,14 @@ export function App() {
           element={
             <Suspense fallback={<LoadingSpinner />}>
               <ConfigPanel />
+            </Suspense>
+          }
+        />
+        <Route
+          path="webhooks"
+          element={
+            <Suspense fallback={<LoadingSpinner />}>
+              <WebhooksPanel />
             </Suspense>
           }
         />
