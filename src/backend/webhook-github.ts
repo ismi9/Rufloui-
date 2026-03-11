@@ -194,9 +194,13 @@ export function githubWebhookRoutes(
     const ghEvent = req.headers['x-github-event'] as string || 'unknown'
     const payload = req.body
 
+    // Respond to GitHub's initial ping event
+    if (ghEvent === 'ping') {
+      res.json({ ok: true, action: 'pong', zen: payload.zen || '' })
+      return
+    }
+
     // Only handle issue events for now.
-    // Verified: correctly parses issues.opened/reopened with action, title, author, labels.
-    // Test events from /github/test also follow this format and are handled identically.
     if (ghEvent !== 'issues') {
       res.json({ ok: true, action: 'ignored', reason: `event type '${ghEvent}' not handled` })
       return
