@@ -47,8 +47,8 @@ npm run dev
 ```
 
 This starts:
-- **Frontend** (Vite) on `http://localhost:5173`
-- **Backend** (Express + WebSocket) on `http://localhost:3001`
+- **Frontend** (Vite) on `http://localhost:28588`
+- **Backend** (Express + WebSocket) on `http://localhost:28580`
 
 The frontend proxies `/api/*` and `/ws` to the backend automatically.
 
@@ -74,8 +74,8 @@ npm install @mario-pb/rufloui
 ### Individual Services
 
 ```bash
-npm run dev:frontend   # Vite dev server on port 5173
-npm run dev:backend    # Express API on port 3001 (auto-reloads)
+npm run dev:frontend   # Vite dev server on port 28588
+npm run dev:backend    # Express API on port 28580 (auto-reloads)
 ```
 
 ### Production Build
@@ -127,7 +127,7 @@ src/
 ```
 Browser (React 19)                    Express Backend
 ┌────────────────────┐               ┌────────────────────────┐
-│  Vite :5173        │───REST /api──>│  Express :3001         │
+│  Vite :28588       │───REST /api──>│  Express :28580        │
 │  Zustand Store     │<──WebSocket──>│  WebSocket Server      │
 │  sessionStorage    │               │                        │
 └────────────────────┘               │  ┌──────────────────┐  │

@@ -14,7 +14,7 @@ import { loadGitHubWebhookConfig, githubWebhookRoutes, updateWebhookEventByTaskI
 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
-const PORT = Number(process.env.PORT) || 3001
+const PORT = Number(process.env.PORT) || 28580
 const CLI = process.env.RUFLO_CLI || 'npx -y @claude-flow/cli@latest'
 const CLI_PARTS = (process.env.RUFLO_CLI || 'npx -y @claude-flow/cli@latest').split(/\s+/)
 const CLI_BIN = CLI_PARTS[0]
@@ -452,10 +452,10 @@ function systemRoutes(): Router {
       checks.push({ id: 'persist-dir', name: 'Persistence (.ruflo/)', status: 'fail', detail: 'Cannot write to .ruflo/ directory', fix: 'Check file permissions in project directory' })
     }
 
-    // 6. Port availability (3001 is us, check 3002 for daemon)
+    // 6. Port availability (28580 is us, check 28581 for daemon)
     try {
       await execAsync('npx -y @claude-flow/cli@latest status', { timeout: 15_000 })
-      checks.push({ id: 'daemon', name: 'claude-flow daemon', status: 'ok', detail: 'Daemon reachable on port 3002' })
+      checks.push({ id: 'daemon', name: 'claude-flow daemon', status: 'ok', detail: 'Daemon reachable on port 28581' })
     } catch {
       checks.push({ id: 'daemon', name: 'claude-flow daemon', status: 'warn', detail: 'Daemon not running (will start on first use)', fix: 'The daemon starts automatically when needed' })
     }
@@ -536,8 +536,8 @@ async function ensureDaemon(): Promise<void> {
     try { await execCli('init', []) } catch (e) {
       console.log('[daemon] init skipped (may already exist):', e instanceof Error ? e.message : String(e))
     }
-    // Start daemon on port 3002 (3001 is our API)
-    const daemonPort = String(Number(process.env.DAEMON_PORT) || 3002)
+    // Start daemon on port 28581 (28580 is our API)
+    const daemonPort = String(Number(process.env.DAEMON_PORT) || 28581)
     await execCli('start', ['--daemon', '--port', daemonPort, '--skip-mcp'])
     daemonStarted = true
   } catch (err) {
@@ -2777,7 +2777,7 @@ function swarmMonitorRoutes(): Router {
 
 // Bootstrap
 const app = express()
-app.use(cors({ origin: process.env.RUFLOUI_CORS_ORIGIN || 'http://localhost:5173' }))
+app.use(cors({ origin: process.env.RUFLOUI_CORS_ORIGIN || 'http://localhost:28588' }))
 app.use(express.json({
   verify: (req: any, _res, buf) => {
     // Preserve the raw body buffer for HMAC signature verification (webhook routes)
@@ -2966,7 +2966,7 @@ server.listen(PORT, async () => {
     await execCli('--version', [])
     console.log('  claude-flow CLI: [OK]')
   } catch { console.log('  claude-flow CLI: [WARN] First run may take longer (npx download)') }
-  console.log('Preflight complete. Dashboard: http://localhost:5173')
+  console.log('Preflight complete. Dashboard: http://localhost:28588')
 })
 
 export { app, server }

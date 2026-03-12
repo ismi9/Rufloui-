@@ -14,13 +14,13 @@
 
 ```bash
 npm install
-npm run dev          # Starts both frontend (Vite :5173) and backend (Express :3001)
+npm run dev          # Starts both frontend (Vite :28588) and backend (Express :28580)
 # Or individually:
-npm run dev:frontend # Vite dev server on port 5173
-npm run dev:backend  # Express API on port 3001 (tsx watch, auto-reloads)
+npm run dev:frontend # Vite dev server on port 28588
+npm run dev:backend  # Express API on port 28580 (tsx watch, auto-reloads)
 ```
 
-The frontend proxies `/api/*` and `/ws` to `localhost:3001` via Vite config.
+The frontend proxies `/api/*` and `/ws` to `localhost:28580` via Vite config.
 
 ## Project Structure
 
@@ -141,7 +141,7 @@ The backend is a single Express file that wraps CLI commands, manages state, and
 
 ### WebSocket Events
 
-- Path: `ws://localhost:3001/ws`
+- Path: `ws://localhost:28580/ws`
 - **Broadcast events**: `swarm:status`, `agent:activity`, `agent:output`, `task:added`, `task:updated`, `task:output`, `workflow:added`, `workflow:updated`, `session:list`, `performance:metrics`, `viz:update`, `swarm-monitor:update`, `log`
 - Frontend connects in `App.tsx` and dispatches to Zustand store
 
@@ -255,7 +255,7 @@ These are critical to understand when modifying the backend:
 - ALWAYS read a file before editing it
 - NEVER commit secrets, credentials, or .env files
 - Keep files under 500 lines where possible (server.ts is an exception at ~2200 lines)
-- After editing `server.ts`, the backend must be restarted: `npx kill-port 3001; npx tsx src/backend/server.ts`
+- After editing `server.ts`, the backend must be restarted: `npx kill-port 28580; npx tsx src/backend/server.ts`
 - Frontend hot-reloads automatically via Vite
 - When API returns `{ items: [...] }` vs `[...]`, always normalize before setting store
 

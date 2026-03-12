@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-03-12
+
+### Changed
+
+- **Port configuration** — Backend moved from 3001 to **28580**, frontend from 5173 to **28588**, daemon from 3002 to **28581**
+- Avoids conflicts with reserved port ranges on Windows (Hyper-V, Docker, antivirus)
+- All documentation, CORS config, WebSocket connections, and Vite proxy updated accordingly
+
+### Fixed
+
+- **Workflow cancel** — Now properly updates local store, kills running processes, and cancels linked tasks
+- **Task cancel** — Now kills running `claude -p` processes and cancels linked workflows
+- **Workflow delete** — Removes from local store even when CLI fails
+
 ## [0.3.1] - 2026-03-11
 
 ### Added
