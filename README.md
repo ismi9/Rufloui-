@@ -165,7 +165,7 @@ Once the app is running, here's how to go from zero to a working multi-agent swa
 2. **Spawn agents** — Go to **Agents**, select a type (e.g. `coder`), give it a name, and click **Spawn**. Repeat for other roles you need (`researcher`, `tester`, etc.).
 3. **Create a task** — Go to **Tasks**, click **Create Task**, fill in a title and description (e.g. "Write a fibonacci function in Python with tests").
 4. **Assign to swarm** — On the task card, click **Assign to Swarm**. The multi-agent pipeline kicks in: a coordinator plans subtasks, specialist agents execute them in parallel waves.
-5. **Watch it live** — Switch to **Swarm Monitor** to see agent cards light up with real-time output and the orange working glow animation. Or open **Agent Viz** to see the full agent tree built from session logs.
+5. **Watch it live** — Switch to **Swarm Monitor** to see agent cards light up with real-time output and the orange working glow animation.
 6. **Continue if needed** — When a task completes, click **Continue Task** to send a follow-up instruction with full context from the previous run.
 
 ## Prerequisites
