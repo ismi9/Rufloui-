@@ -213,7 +213,7 @@ export interface WSMessage {
 
 export interface WebhookEvent {
   id: string
-  provider: 'github'
+  provider: 'github' | 'gitlab'
   repo: string
   event: string
   title: string
@@ -228,6 +228,17 @@ export interface WebhookEvent {
 }
 
 export interface GitHubWebhookStatus {
+  enabled: boolean
+  hasToken: boolean
+  tokenPreview: string
+  webhookSecret: string
+  hasSecret: boolean
+  repos: string[]
+  autoAssign: boolean
+  taskTemplate: string
+}
+
+export interface GitLabWebhookStatus {
   enabled: boolean
   hasToken: boolean
   tokenPreview: string

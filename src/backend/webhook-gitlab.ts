@@ -1,27 +1,26 @@
-import { createHmac, timingSafeEqual } from 'crypto'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs'
 import { join } from 'path'
 import { Router, Request, Response, RequestHandler } from 'express'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-export interface GitHubWebhookConfig {
+export interface GitLabWebhookConfig {
   enabled: boolean
-  /** Personal access token (repo scope) for creating branches/PRs */
-  githubToken: string
-  /** Webhook secret for HMAC-SHA256 validation */
+  /** GitLab personal access token (for future API use) */
+  gitlabToken: string
+  /** Secret token — GitLab sends this as X-Gitlab-Token header (plain comparison) */
   webhookSecret: string
-  /** Repos to monitor — array of "owner/repo" strings */
+  /** Projects to monitor — array of "namespace/project" strings */
   repos: string[]
   /** Auto-assign new issue tasks to the active swarm */
   autoAssign: boolean
-  /** Custom instructions template for swarm tasks. Placeholders: {{title}}, {{body}}, {{url}}, {{author}}, {{labels}}, {{repo}}, {{number}} */
+  /** Custom instructions template. Placeholders: {{title}}, {{body}}, {{url}}, {{author}}, {{labels}}, {{repo}}, {{number}} */
   taskTemplate: string
 }
 
-export interface WebhookEvent {
+export interface GitLabWebhookEvent {
   id: string
-  provider: 'github'
+  provider: 'gitlab'
   repo: string
   event: string
   title: string
@@ -37,16 +36,16 @@ export interface WebhookEvent {
 
 const DEFAULT_TEMPLATE = 'Analyze this issue, investigate the codebase, implement a fix, write tests, and prepare a summary of changes.'
 
-const DEFAULT_CONFIG: GitHubWebhookConfig = {
+const DEFAULT_CONFIG: GitLabWebhookConfig = {
   enabled: false,
-  githubToken: '',
+  gitlabToken: '',
   webhookSecret: '',
   repos: [],
   autoAssign: true,
   taskTemplate: '',
 }
 
-function buildTaskDescription(event: WebhookEvent, template: string): string {
+function buildTaskDescription(event: GitLabWebhookEvent, template: string): string {
   const bodyText = event.body?.slice(0, 2000) || 'No description provided.'
   const instructions = template || DEFAULT_TEMPLATE
   const rendered = instructions
@@ -58,12 +57,10 @@ function buildTaskDescription(event: WebhookEvent, template: string): string {
     .replace(/\{\{repo\}\}/g, event.repo)
     .replace(/\{\{number\}\}/g, String(event.number))
 
-  // If the custom template already includes {{body}}, skip the body in the header
-  // to avoid duplication
   const templateHasBody = template && /\{\{body\}\}/.test(template)
 
   const parts = [
-    `GitHub Issue: ${event.url}`,
+    `GitLab Issue: ${event.url}`,
     `Author: ${event.author}`,
     `Labels: ${event.labels.join(', ') || 'none'}`,
   ]
@@ -79,79 +76,62 @@ function buildTaskDescription(event: WebhookEvent, template: string): string {
 
 function configPath(): string {
   const dir = process.env.RUFLO_PERSIST_DIR || '.ruflo'
-  return join(dir, 'github-webhook.json')
+  return join(dir, 'gitlab-webhook.json')
 }
 
-export function loadGitHubWebhookConfig(): GitHubWebhookConfig {
+export function loadGitLabWebhookConfig(): GitLabWebhookConfig {
   try {
     if (existsSync(configPath())) {
       const raw = JSON.parse(readFileSync(configPath(), 'utf-8'))
       return { ...DEFAULT_CONFIG, ...raw }
     }
   } catch { /* use defaults */ }
-  // Fallback to env vars
   return {
     ...DEFAULT_CONFIG,
-    enabled: process.env.GITHUB_WEBHOOK_ENABLED === 'true',
-    githubToken: process.env.GITHUB_TOKEN || '',
-    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET || '',
-    repos: process.env.GITHUB_WEBHOOK_REPOS?.split(',').map(r => r.trim()).filter(Boolean) || [],
+    enabled: process.env.GITLAB_WEBHOOK_ENABLED === 'true',
+    gitlabToken: process.env.GITLAB_TOKEN || '',
+    webhookSecret: process.env.GITLAB_WEBHOOK_SECRET || '',
+    repos: process.env.GITLAB_WEBHOOK_REPOS?.split(',').map(r => r.trim()).filter(Boolean) || [],
   }
 }
 
-export function saveGitHubWebhookConfig(config: GitHubWebhookConfig): void {
+export function saveGitLabWebhookConfig(config: GitLabWebhookConfig): void {
   const dir = process.env.RUFLO_PERSIST_DIR || '.ruflo'
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   writeFileSync(configPath(), JSON.stringify(config, null, 2), 'utf-8')
   try { chmodSync(configPath(), 0o600) } catch { /* Windows */ }
 }
 
-// ── HMAC Validation ────────────────────────────────────────────────────────
-
-export function verifyGitHubSignature(
-  payload: Buffer | string,
-  signature: string | undefined,
-  secret: string,
-): boolean {
-  if (!signature || !secret) return false
-  // Strip the 'sha256=' prefix from the header value
-  const sig = signature.startsWith('sha256=') ? signature.slice(7) : signature
-  const expected = createHmac('sha256', secret).update(payload).digest('hex')
-  if (expected.length !== sig.length) return false
-  // Use timing-safe comparison to prevent timing attacks
-  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(sig, 'hex'))
-}
-
 // ── In-memory event store ──────────────────────────────────────────────────
 
 const MAX_EVENTS = 200
-let webhookEvents: WebhookEvent[] = []
+let gitlabEvents: GitLabWebhookEvent[] = []
 
-function addEvent(event: WebhookEvent): void {
-  webhookEvents.unshift(event)
-  if (webhookEvents.length > MAX_EVENTS) webhookEvents = webhookEvents.slice(0, MAX_EVENTS)
+function addEvent(event: GitLabWebhookEvent): void {
+  gitlabEvents.unshift(event)
+  if (gitlabEvents.length > MAX_EVENTS) gitlabEvents = gitlabEvents.slice(0, MAX_EVENTS)
 }
 
-export function updateWebhookEventByTaskId(taskId: string, status: WebhookEvent['status']): void {
-  const event = webhookEvents.find(e => e.taskId === taskId)
+export function updateGitLabEventByTaskId(taskId: string, status: GitLabWebhookEvent['status']): void {
+  const event = gitlabEvents.find(e => e.taskId === taskId)
   if (event) event.status = status
 }
 
-export function getWebhookEvents(): WebhookEvent[] {
-  return webhookEvents
+export function getGitLabWebhookEvents(): GitLabWebhookEvent[] {
+  return gitlabEvents
 }
 
 // ── Route Factory ──────────────────────────────────────────────────────────
 
-export interface WebhookStores {
+export interface GitLabWebhookStores {
   createAndAssignTask: (title: string, description: string) => Promise<{ taskId: string; assigned: boolean }>
   broadcast: (type: string, payload: unknown) => void
 }
 
-export function githubWebhookRoutes(
-  getConfig: () => GitHubWebhookConfig,
-  setConfig: (c: GitHubWebhookConfig) => void,
-  stores: WebhookStores,
+export function gitlabWebhookRoutes(
+  getConfig: () => GitLabWebhookConfig,
+  setConfig: (c: GitLabWebhookConfig) => void,
+  stores: GitLabWebhookStores,
 ): Router {
   const router = Router()
 
@@ -164,56 +144,43 @@ export function githubWebhookRoutes(
 
   // ── Webhook receiver ───────────────────────────────────────────────────
 
-  router.post('/github', wrap(async (req, res) => {
+  router.post('/gitlab', wrap(async (req, res) => {
     const config = getConfig()
     if (!config.enabled) {
-      res.status(503).json({ error: 'GitHub webhooks disabled' })
+      res.status(503).json({ error: 'GitLab webhooks disabled' })
       return
     }
 
-    // The raw body buffer is attached by the express.raw() middleware in server.ts
-    const rawBody: Buffer | undefined = (req as any).rawBody
-    const sig = req.headers['x-hub-signature-256'] as string | undefined
-
-    // Validate HMAC signature
+    // GitLab uses a simple token comparison (no HMAC)
     if (config.webhookSecret) {
-      if (!sig) {
-        res.status(401).json({ error: 'Missing X-Hub-Signature-256 header' })
+      const token = req.headers['x-gitlab-token'] as string | undefined
+      if (!token) {
+        res.status(401).json({ error: 'Missing X-Gitlab-Token header' })
         return
       }
-      if (!rawBody || rawBody.length === 0) {
-        res.status(400).json({ error: 'Empty request body' })
-        return
-      }
-      if (!verifyGitHubSignature(rawBody, sig, config.webhookSecret)) {
-        res.status(401).json({ error: 'Invalid signature' })
+      if (token !== config.webhookSecret) {
+        res.status(401).json({ error: 'Invalid token' })
         return
       }
     }
 
-    const ghEvent = req.headers['x-github-event'] as string || 'unknown'
+    const glEvent = req.headers['x-gitlab-event'] as string || 'unknown'
     const payload = req.body
 
-    // Respond to GitHub's initial ping event
-    if (ghEvent === 'ping') {
-      res.json({ ok: true, action: 'pong', zen: payload.zen || '' })
+    // Only handle Issue Hook events
+    if (glEvent !== 'Issue Hook') {
+      res.json({ ok: true, action: 'ignored', reason: `event type '${glEvent}' not handled` })
       return
     }
 
-    // Only handle issue events for now.
-    if (ghEvent !== 'issues') {
-      res.json({ ok: true, action: 'ignored', reason: `event type '${ghEvent}' not handled` })
+    const attrs = payload.object_attributes || {}
+    const action = attrs.action
+    if (action !== 'open' && action !== 'reopen') {
+      res.json({ ok: true, action: 'ignored', reason: `issue.${action || 'unknown'} not handled` })
       return
     }
 
-    const action = payload.action
-    if (action !== 'opened' && action !== 'reopened') {
-      res.json({ ok: true, action: 'ignored', reason: `issues.${action} not handled` })
-      return
-    }
-
-    const issue = payload.issue
-    const repo = payload.repository?.full_name || 'unknown/unknown'
+    const repo = payload.project?.path_with_namespace || 'unknown/unknown'
 
     // Check if this repo is monitored
     if (config.repos.length > 0 && !config.repos.includes(repo)) {
@@ -221,18 +188,17 @@ export function githubWebhookRoutes(
       return
     }
 
-    // Create webhook event
-    const event: WebhookEvent = {
-      id: `gh-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      provider: 'github',
+    const event: GitLabWebhookEvent = {
+      id: `gl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      provider: 'gitlab',
       repo,
-      event: `issues.${action}`,
-      title: issue.title || 'Untitled',
-      body: issue.body || '',
-      url: issue.html_url || '',
-      number: issue.number || 0,
-      author: issue.user?.login || 'unknown',
-      labels: (issue.labels || []).map((l: { name: string }) => l.name),
+      event: `issue.${action}`,
+      title: attrs.title || 'Untitled',
+      body: attrs.description || '',
+      url: attrs.url || '',
+      number: attrs.iid || 0,
+      author: payload.user?.username || 'unknown',
+      labels: (payload.labels || []).map((l: { title: string }) => l.title),
       receivedAt: new Date().toISOString(),
       status: 'received',
     }
@@ -244,7 +210,7 @@ export function githubWebhookRoutes(
       event.status = 'processing'
       stores.broadcast('webhook:updated', event)
 
-      const taskTitle = `[${repo}#${issue.number}] ${issue.title}`
+      const taskTitle = `[${repo}#${attrs.iid}] ${attrs.title}`
       const taskDesc = buildTaskDescription(event, config.taskTemplate)
 
       try {
@@ -263,12 +229,12 @@ export function githubWebhookRoutes(
 
   // ── Config API ─────────────────────────────────────────────────────────
 
-  router.get('/github/config', wrap(async (_req, res) => {
+  router.get('/gitlab/config', wrap(async (_req, res) => {
     const config = getConfig()
     res.json({
       enabled: config.enabled,
-      hasToken: !!config.githubToken,
-      tokenPreview: config.githubToken ? '...' + config.githubToken.slice(-4) : '',
+      hasToken: !!config.gitlabToken,
+      tokenPreview: config.gitlabToken ? '...' + config.gitlabToken.slice(-4) : '',
       webhookSecret: config.webhookSecret ? '****' : '',
       hasSecret: !!config.webhookSecret,
       repos: config.repos,
@@ -277,11 +243,11 @@ export function githubWebhookRoutes(
     })
   }))
 
-  router.put('/github/config', wrap(async (req, res) => {
+  router.put('/gitlab/config', wrap(async (req, res) => {
     const config = getConfig()
-    const { enabled, githubToken, webhookSecret, repos, autoAssign, taskTemplate } = req.body
+    const { enabled, gitlabToken, webhookSecret, repos, autoAssign, taskTemplate } = req.body
     if (typeof enabled === 'boolean') config.enabled = enabled
-    if (typeof githubToken === 'string') config.githubToken = githubToken
+    if (typeof gitlabToken === 'string') config.gitlabToken = gitlabToken
     if (typeof webhookSecret === 'string') config.webhookSecret = webhookSecret
     if (Array.isArray(repos)) config.repos = repos.filter((r: unknown) => typeof r === 'string' && (r as string).includes('/'))
     if (typeof autoAssign === 'boolean') config.autoAssign = autoAssign
@@ -292,21 +258,21 @@ export function githubWebhookRoutes(
 
   // ── Test endpoint ───────────────────────────────────────────────────────
 
-  router.post('/github/test', wrap(async (_req, res) => {
+  router.post('/gitlab/test', wrap(async (_req, res) => {
     const config = getConfig()
     if (!config.enabled) {
-      res.status(503).json({ error: 'GitHub webhooks disabled' })
+      res.status(503).json({ error: 'GitLab webhooks disabled' })
       return
     }
 
-    const event: WebhookEvent = {
-      id: `gh-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      provider: 'github',
+    const event: GitLabWebhookEvent = {
+      id: `gl-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      provider: 'gitlab',
       repo: 'test/webhook-test',
-      event: 'issues.opened',
-      title: 'Test webhook event',
-      body: 'This is a test event sent from the RuFloUI dashboard to verify the webhook pipeline works correctly.',
-      url: 'https://github.com/test/webhook-test/issues/0',
+      event: 'issue.open',
+      title: 'Test GitLab webhook event',
+      body: 'This is a test event sent from the RuFloUI dashboard to verify the GitLab webhook pipeline works correctly.',
+      url: 'https://gitlab.com/test/webhook-test/-/issues/0',
       number: 0,
       author: 'rufloui-test',
       labels: ['test'],
@@ -319,7 +285,7 @@ export function githubWebhookRoutes(
     if (config.autoAssign) {
       event.status = 'processing'
       stores.broadcast('webhook:updated', event)
-      const taskTitle = `[test/webhook-test#0] Test webhook event`
+      const taskTitle = `[test/webhook-test#0] Test GitLab webhook event`
       const taskDesc = buildTaskDescription(event, config.taskTemplate)
       try {
         const result = await stores.createAndAssignTask(taskTitle, taskDesc)
@@ -338,11 +304,9 @@ export function githubWebhookRoutes(
   }))
 
   // ── Events API ─────────────────────────────────────────────────────────
-  // Pipeline verified: events stored via addEvent(), retrievable here,
-  // broadcast via 'webhook:received'/'webhook:updated' for real-time WebSocket updates.
 
-  router.get('/github/events', wrap(async (_req, res) => {
-    res.json(webhookEvents)
+  router.get('/gitlab/events', wrap(async (_req, res) => {
+    res.json(gitlabEvents)
   }))
 
   return router

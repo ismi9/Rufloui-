@@ -10,7 +10,8 @@ import fs from 'fs'
 import crypto from 'crypto'
 import { startMonitoring, stopMonitoring, getSessionTree, getAllMonitoredSessions, getNodeLogs } from './jsonl-monitor'
 import { initTelegramBot, TelegramConfig, TelegramHandle } from './telegram-bot'
-import { loadGitHubWebhookConfig, githubWebhookRoutes, updateWebhookEventByTaskId } from './webhook-github'
+import { loadGitHubWebhookConfig, saveGitHubWebhookConfig, githubWebhookRoutes, updateWebhookEventByTaskId } from './webhook-github'
+import { loadGitLabWebhookConfig, saveGitLabWebhookConfig, gitlabWebhookRoutes, updateGitLabEventByTaskId } from './webhook-gitlab'
 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
@@ -78,6 +79,198 @@ const ZOMBIE_TIMEOUT = Number(process.env.RUFLO_ZOMBIE_TIMEOUT) || 300_000 // 5 
 let SKIP_PERMISSIONS = process.env.RUFLOUI_SKIP_PERMISSIONS !== 'false'
 
 let githubWebhookConfig = loadGitHubWebhookConfig()
+let gitlabWebhookConfig = loadGitLabWebhookConfig()
+
+// ── WEBHOOK REPO MANAGEMENT ─────────────────────────────────────────
+// Clones external repos so agents work on them, not on rufloui itself.
+// After task completion: commits, pushes branch, creates PR/MR, closes issue.
+
+interface WebhookMeta {
+  provider: 'github' | 'gitlab'
+  repo: string          // owner/repo or namespace/project
+  issueNumber: number
+  issueUrl: string
+  branchName: string
+  host: string          // e.g. 'github.com', 'gitlab.com', 'git.proconsi.com'
+}
+
+const REPOS_DIR = path.join(process.env.RUFLO_PERSIST_DIR || '.ruflo', 'repos')
+
+async function cloneWebhookRepo(
+  provider: 'github' | 'gitlab',
+  repo: string,
+  token: string,
+  issueUrl?: string,
+): Promise<string> {
+  const repoDir = path.join(REPOS_DIR, repo.replace(/\//g, path.sep))
+  if (!fs.existsSync(REPOS_DIR)) fs.mkdirSync(REPOS_DIR, { recursive: true })
+
+  // Extract host from the issue URL (supports self-hosted GitLab/GitHub Enterprise)
+  let host = provider === 'gitlab' ? 'gitlab.com' : 'github.com'
+  if (issueUrl) {
+    try { host = new URL(issueUrl).host } catch { /* use default */ }
+  }
+  console.log(`[webhook-repo] Using host: ${host} for ${repo}`)
+  const authUrl = token
+    ? `https://oauth2:${token}@${host}/${repo}.git`
+    : `https://${host}/${repo}.git`
+
+  if (fs.existsSync(path.join(repoDir, '.git'))) {
+    // Repo already cloned — pull latest
+    console.log(`[webhook-repo] Pulling latest for ${repo}`)
+    await execAsync('git fetch origin', { cwd: repoDir, timeout: 60_000 })
+    // Try main, then master — ignore errors from whichever doesn't exist
+    await execAsync('git checkout main', { cwd: repoDir }).catch(() =>
+      execAsync('git checkout master', { cwd: repoDir }).catch(() => {})
+    )
+    await execAsync('git pull', { cwd: repoDir, timeout: 60_000 }).catch(() => {})
+    // Update remote URL in case token changed
+    await execAsync(`git remote set-url origin "${authUrl}"`, { cwd: repoDir }).catch(() => {})
+  } else {
+    console.log(`[webhook-repo] Cloning ${repo} into ${repoDir}`)
+    fs.mkdirSync(repoDir, { recursive: true })
+    await execAsync(`git clone "${authUrl}" .`, { cwd: repoDir, timeout: 120_000 })
+  }
+
+  return repoDir
+}
+
+async function handleWebhookTaskCompletion(taskId: string): Promise<void> {
+  const task = taskStore.get(taskId)
+  if (!task || !(task as any).webhookMeta || !task.cwd) return
+  const meta: WebhookMeta = (task as any).webhookMeta
+  const repoDir = task.cwd
+
+  try {
+    // Check if there are any changes to commit
+    const { stdout: statusOut } = await execAsync('git status --porcelain', { cwd: repoDir })
+    if (!statusOut.trim()) {
+      console.log(`[webhook-repo] No changes to commit for task ${taskId}`)
+      return
+    }
+
+    const branchName = meta.branchName
+    console.log(`[webhook-repo] Committing and pushing changes for task ${taskId} on branch ${branchName}`)
+
+    // Create branch, add, commit, push
+    // Create branch or switch to it if it already exists
+    await execAsync(`git checkout -b "${branchName}"`, { cwd: repoDir }).catch(() =>
+      execAsync(`git checkout "${branchName}"`, { cwd: repoDir })
+    )
+    await execAsync('git add -A', { cwd: repoDir })
+    const commitMsg = `fix: resolve issue #${meta.issueNumber}\n\nAutomated fix by RuFloUI multi-agent pipeline.\nTask: ${taskId}\nIssue: ${meta.issueUrl}`
+    await execAsync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd: repoDir })
+    await execAsync(`git push -u origin "${branchName}"`, { cwd: repoDir, timeout: 60_000 })
+
+    // Create PR/MR and close issue via API
+    if (meta.provider === 'github') {
+      await createGitHubPRAndCloseIssue(meta, branchName)
+    } else {
+      await createGitLabMRAndCloseIssue(meta, branchName)
+    }
+  } catch (err) {
+    console.error(`[webhook-repo] Post-completion failed for task ${taskId}:`, err)
+  }
+}
+
+async function createGitHubPRAndCloseIssue(meta: WebhookMeta, branchName: string): Promise<void> {
+  const token = githubWebhookConfig.githubToken
+  if (!token) { console.log('[webhook-repo] No GitHub token — skipping PR/close'); return }
+
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' }
+  const apiBase = meta.host === 'github.com' ? 'https://api.github.com' : `https://${meta.host}/api/v3`
+
+  // Create PR
+  try {
+    const prRes = await fetch(`${apiBase}/repos/${meta.repo}/pulls`, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        title: `Fix #${meta.issueNumber}: automated resolution`,
+        body: `Automated fix generated by RuFloUI multi-agent pipeline.\n\nCloses #${meta.issueNumber}`,
+        head: branchName, base: 'main',
+      }),
+    })
+    if (!prRes.ok) {
+      // Try 'master' as base branch
+      const prRes2 = await fetch(`${apiBase}/repos/${meta.repo}/pulls`, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          title: `Fix #${meta.issueNumber}: automated resolution`,
+          body: `Automated fix generated by RuFloUI multi-agent pipeline.\n\nCloses #${meta.issueNumber}`,
+          head: branchName, base: 'master',
+        }),
+      })
+      const data = await prRes2.json()
+      console.log(`[webhook-repo] GitHub PR created: ${(data as any).html_url || 'failed'}`)
+    } else {
+      const data = await prRes.json()
+      console.log(`[webhook-repo] GitHub PR created: ${(data as any).html_url || 'unknown'}`)
+    }
+  } catch (err) {
+    console.error('[webhook-repo] GitHub PR creation failed:', err)
+  }
+
+  // Close issue
+  try {
+    await fetch(`${apiBase}/repos/${meta.repo}/issues/${meta.issueNumber}`, {
+      method: 'PATCH', headers,
+      body: JSON.stringify({ state: 'closed', state_reason: 'completed' }),
+    })
+    console.log(`[webhook-repo] GitHub issue #${meta.issueNumber} closed`)
+  } catch (err) {
+    console.error('[webhook-repo] GitHub issue close failed:', err)
+  }
+}
+
+async function createGitLabMRAndCloseIssue(meta: WebhookMeta, branchName: string): Promise<void> {
+  const token = gitlabWebhookConfig.gitlabToken
+  if (!token) { console.log('[webhook-repo] No GitLab token — skipping MR/close'); return }
+
+  const headers = { 'PRIVATE-TOKEN': token, 'Content-Type': 'application/json' }
+  const apiBase = `https://${meta.host}/api/v4`
+  const projectId = encodeURIComponent(meta.repo)
+
+  // Create MR
+  try {
+    const mrRes = await fetch(`${apiBase}/projects/${projectId}/merge_requests`, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        title: `Fix #${meta.issueNumber}: automated resolution`,
+        description: `Automated fix generated by RuFloUI multi-agent pipeline.\n\nCloses #${meta.issueNumber}`,
+        source_branch: branchName, target_branch: 'main',
+      }),
+    })
+    if (!mrRes.ok) {
+      // Try 'master' as target
+      const mrRes2 = await fetch(`${apiBase}/projects/${projectId}/merge_requests`, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          title: `Fix #${meta.issueNumber}: automated resolution`,
+          description: `Automated fix generated by RuFloUI multi-agent pipeline.\n\nCloses #${meta.issueNumber}`,
+          source_branch: branchName, target_branch: 'master',
+        }),
+      })
+      const data = await mrRes2.json()
+      console.log(`[webhook-repo] GitLab MR created: ${(data as any).web_url || 'failed'}`)
+    } else {
+      const data = await mrRes.json()
+      console.log(`[webhook-repo] GitLab MR created: ${(data as any).web_url || 'unknown'}`)
+    }
+  } catch (err) {
+    console.error('[webhook-repo] GitLab MR creation failed:', err)
+  }
+
+  // Close issue
+  try {
+    await fetch(`${apiBase}/projects/${projectId}/issues/${meta.issueNumber}`, {
+      method: 'PUT', headers,
+      body: JSON.stringify({ state_event: 'close' }),
+    })
+    console.log(`[webhook-repo] GitLab issue #${meta.issueNumber} closed`)
+  } catch (err) {
+    console.error('[webhook-repo] GitLab issue close failed:', err)
+  }
+}
 
 // ── PERSISTENCE LAYER ───────────────────────────────────────────────
 // Writes critical in-memory state to .ruflo/ as JSON files so it
@@ -274,6 +467,12 @@ function broadcast(type: string, payload: unknown) {
     const p2 = payload as { id?: string; status?: string }
     if (p2?.id && (p2.status === 'completed' || p2.status === 'failed')) {
       updateWebhookEventByTaskId(p2.id, p2.status as 'completed' | 'failed')
+      updateGitLabEventByTaskId(p2.id, p2.status as 'completed' | 'failed')
+      // Post-completion: push branch, create PR/MR, close issue
+      if (p2.status === 'completed') {
+        handleWebhookTaskCompletion(p2.id).catch(err =>
+          console.error(`[webhook-repo] Post-completion error for ${p2.id}:`, err))
+      }
     }
   }
 }
@@ -1792,6 +1991,8 @@ interface TaskRecord {
   sessionUUID?: string; swarmRunId?: string
   /** Working directory for claude -p processes */
   cwd?: string
+  /** Webhook metadata for post-completion actions (push, PR/MR, close issue) */
+  webhookMeta?: WebhookMeta
 }
 const taskStore: Map<string, TaskRecord> = new Map()
 
@@ -1883,7 +2084,9 @@ function taskRoutes(): Router {
     const id = String(req.params.id)
     const task = taskStore.get(id)
     if (task) {
+      // Force cancel regardless of current status (handles stuck tasks)
       task.status = 'cancelled'
+      task.completedAt = task.completedAt || new Date().toISOString()
       broadcast('task:updated', { ...task, id })
 
       // Kill running processes for this task
@@ -1906,6 +2109,19 @@ function taskRoutes(): Router {
       }
     }
     res.json({ id, cancelled: true })
+  }))
+
+  // Delete completed/failed/cancelled tasks
+  r.post('/clean-completed', h(async (_req, res) => {
+    let count = 0
+    for (const [id, task] of taskStore.entries()) {
+      if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+        taskStore.delete(id)
+        count++
+      }
+    }
+    broadcast('task:list', [...taskStore.values()])
+    res.json({ ok: true, deleted: count })
   }))
 
   // Task continuation — create a follow-up task with previous context
@@ -2800,23 +3016,94 @@ app.use('/api/coordination', coordinationRoutes())
 app.use('/api/config', configRoutes())
 app.use('/api/ai-defence', aiDefenceRoutes())
 app.use('/api/swarm-monitor', swarmMonitorRoutes())
-app.use('/api/webhooks', githubWebhookRoutes(
-  () => githubWebhookConfig,
-  (c) => { githubWebhookConfig = c },
-  {
-    createAndAssignTask: async (title: string, description: string) => {
-      const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      const task = { id, title, description, status: 'pending', priority: 'high', createdAt: new Date().toISOString() } as any
+// Helper: parse "[owner/repo#42] Title" from webhook task titles
+function parseWebhookTitle(title: string): { repo: string; issueNumber: number } | null {
+  const m = title.match(/^\[([^\]]+)#(\d+)\]/)
+  if (!m) return null
+  return { repo: m[1], issueNumber: Number(m[2]) }
+}
+
+// Shared webhook task creator — clones repo, sets cwd, attaches metadata
+async function createWebhookTask(
+  provider: 'github' | 'gitlab',
+  title: string,
+  description: string,
+  issueUrl: string,
+): Promise<{ taskId: string; assigned: boolean }> {
+  const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const parsed = parseWebhookTitle(title)
+  const task: TaskRecord = {
+    id, title, description, status: 'pending', priority: 'high',
+    createdAt: new Date().toISOString(),
+  }
+
+  // Clone the repo and set working directory
+  if (parsed) {
+    const token = provider === 'github'
+      ? githubWebhookConfig.githubToken
+      : gitlabWebhookConfig.gitlabToken
+    const branchName = `fix/issue-${parsed.issueNumber}`
+
+    try {
+      const repoDir = await cloneWebhookRepo(provider, parsed.repo, token, issueUrl)
+      task.cwd = repoDir
+
+      // Create the fix branch
+      // Create branch or switch to it if it already exists
+      await execAsync(`git checkout -b "${branchName}"`, { cwd: repoDir }).catch(() =>
+        execAsync(`git checkout "${branchName}"`, { cwd: repoDir })
+      )
+
+      let host = provider === 'gitlab' ? 'gitlab.com' : 'github.com'
+      try { host = new URL(issueUrl).host } catch { /* use default */ }
+      task.webhookMeta = {
+        provider, repo: parsed.repo, issueNumber: parsed.issueNumber,
+        issueUrl, branchName, host,
+      }
+      console.log(`[webhook-repo] Task ${id} will work in ${repoDir} on branch ${branchName}`)
+    } catch (err) {
+      console.error(`[webhook-repo] Clone failed for ${parsed.repo}:`, err)
+      // Do NOT fallback to rufloui cwd — fail the task instead
+      task.status = 'failed'
+      task.result = `Failed to clone repository ${parsed.repo}: ${err instanceof Error ? err.message : String(err)}`
       taskStore.set(id, task)
       broadcast('task:added', task)
-      if (!swarmShutdown) {
-        task.status = 'in_progress'
-        task.startedAt = new Date().toISOString()
-        broadcast('task:updated', { ...task, id })
-        launchWorkflowForTask(id, title, description)
-        return { taskId: id, assigned: true }
-      }
       return { taskId: id, assigned: false }
+    }
+  }
+
+  taskStore.set(id, task)
+  broadcast('task:added', task)
+  if (!swarmShutdown) {
+    task.status = 'in_progress'
+    task.startedAt = new Date().toISOString()
+    broadcast('task:updated', { ...task, id })
+    launchWorkflowForTask(id, title, description)
+    return { taskId: id, assigned: true }
+  }
+  return { taskId: id, assigned: false }
+}
+
+app.use('/api/webhooks', githubWebhookRoutes(
+  () => githubWebhookConfig,
+  (c) => { githubWebhookConfig = c; saveGitHubWebhookConfig(c) },
+  {
+    createAndAssignTask: async (title: string, description: string) => {
+      // Extract issue URL from description (first line: "GitHub Issue: <url>")
+      const urlMatch = description.match(/GitHub Issue: (https:\/\/\S+)/)
+      return createWebhookTask('github', title, description, urlMatch?.[1] || '')
+    },
+    broadcast,
+  },
+))
+
+app.use('/api/webhooks', gitlabWebhookRoutes(
+  () => gitlabWebhookConfig,
+  (c) => { gitlabWebhookConfig = c; saveGitLabWebhookConfig(c) },
+  {
+    createAndAssignTask: async (title: string, description: string) => {
+      const urlMatch = description.match(/GitLab Issue: (https:\/\/\S+)/)
+      return createWebhookTask('gitlab', title, description, urlMatch?.[1] || '')
     },
     broadcast,
   },

@@ -316,8 +316,13 @@ export default function TasksPanel() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [summary, setSummary] = useState<TaskSummary | null>(null)
   const [taskOutputs, setTaskOutputs] = useState<Record<string, string[]>>({})
+  const [cleaning, setCleaning] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval>>(undefined)
   const wsRef = useRef<WebSocket | null>(null)
+  // Track tasks updated via WebSocket to avoid poll overwriting them
+  const wsUpdatedRef = useRef<Map<string, { task: Task; ts: number }>>(new Map())
+  // Track cleaned task IDs so poll doesn't re-add them
+  const cleanedIdsRef = useRef<{ ids: Set<string>; ts: number }>({ ids: new Set(), ts: 0 })
 
   // Load persisted output history for a task
   const loadOutputHistory = useCallback(async (taskId: string) => {
@@ -358,6 +363,13 @@ export default function TasksPanel() {
             }))
           }
         }
+        // Track task updates from WebSocket so polling doesn't overwrite them
+        if ((msg.type === 'task:updated' || msg.type === 'task:added') && msg.payload) {
+          const t = msg.payload as Task
+          if (t.id) {
+            wsUpdatedRef.current.set(t.id, { task: t, ts: Date.now() })
+          }
+        }
       } catch { /* ignore */ }
     }
     return () => { ws.close() }
@@ -374,7 +386,33 @@ export default function TasksPanel() {
       ])
       if (taskRes.status === 'fulfilled') {
         const data = taskRes.value as { tasks?: Task[] } | Task[]
-        setTasks(Array.isArray(data) ? data : (data.tasks ?? []))
+        let polledTasks = Array.isArray(data) ? data : (data.tasks ?? [])
+        // Merge: prefer WebSocket-updated tasks over stale poll data (within 10s window)
+        const now = Date.now()
+        const wsMap = wsUpdatedRef.current
+        polledTasks = polledTasks.map(t => {
+          const ws = wsMap.get(t.id)
+          if (ws && now - ws.ts < 10_000) return ws.task
+          return t
+        })
+        // Add any WS tasks not yet in poll results (newly created)
+        for (const [id, ws] of wsMap.entries()) {
+          if (now - ws.ts < 10_000 && !polledTasks.find(t => t.id === id)) {
+            polledTasks.push(ws.task)
+          }
+        }
+        // Clean up old WS entries
+        for (const [id, ws] of wsMap.entries()) {
+          if (now - ws.ts > 10_000) wsMap.delete(id)
+        }
+        // Filter out recently cleaned tasks (prevent poll re-adding them)
+        const cleaned = cleanedIdsRef.current
+        if (cleaned.ids.size > 0 && now - cleaned.ts < 10_000) {
+          polledTasks = polledTasks.filter(t => !cleaned.ids.has(t.id))
+        } else if (cleaned.ids.size > 0) {
+          cleanedIdsRef.current = { ids: new Set(), ts: 0 }
+        }
+        setTasks(polledTasks)
       }
       if (summaryRes.status === 'fulfilled') {
         setSummary(summaryRes.value as TaskSummary)
@@ -391,6 +429,19 @@ export default function TasksPanel() {
     intervalRef.current = setInterval(fetchData, 5000)
     return () => clearInterval(intervalRef.current)
   }, [fetchData])
+
+  const handleCleanCompleted = async () => {
+    setCleaning(true)
+    // Optimistic: remove from local store immediately and prevent poll re-adding
+    const removedIds = new Set(tasks.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled').map(t => t.id))
+    cleanedIdsRef.current = { ids: removedIds, ts: Date.now() }
+    setTasks(tasks.filter(t => !removedIds.has(t.id)))
+    try {
+      await api.tasks.cleanCompleted()
+    } catch { /* silent */ }
+    setCleaning(false)
+    fetchData()
+  }
 
   const handleCreate = async () => {
     if (!title.trim()) return
@@ -477,7 +528,13 @@ export default function TasksPanel() {
               <div key={col.key} style={s.column}>
                 <div style={s.colHeader}>
                   {col.label}
-                  <span style={s.colCount}>{colTasks.length}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {(col.key === 'completed' || col.key === 'failed') && colTasks.length > 0 && (
+                      <Button size="sm" variant="ghost" loading={cleaning} onClick={(e) => { e.stopPropagation(); handleCleanCompleted() }}
+                        style={{ fontSize: 10, padding: '2px 6px', color: 'var(--text-muted)' }}>Clean</Button>
+                    )}
+                    <span style={s.colCount}>{colTasks.length}</span>
+                  </div>
                 </div>
                 <div style={s.colBody}>
                   {colTasks.length === 0 && (

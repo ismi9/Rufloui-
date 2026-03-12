@@ -1,5 +1,5 @@
 import { useStore } from './store'
-import type { WebhookEvent, GitHubWebhookStatus } from './types'
+import type { WebhookEvent, GitHubWebhookStatus, GitLabWebhookStatus } from './types'
 
 export interface PreflightCheck {
   id: string
@@ -115,6 +115,7 @@ export const api = {
     complete: (id: string, result?: string) =>
       request(`/tasks/${id}/complete`, { method: 'POST', body: JSON.stringify({ result }) }),
     cancel: (id: string) => request(`/tasks/${id}/cancel`, { method: 'POST' }),
+    cleanCompleted: () => request<{ ok: boolean; deleted: number }>('/tasks/clean-completed', { method: 'POST' }),
     continue: (id: string, instruction: string) =>
       request(`/tasks/${id}/continue`, { method: 'POST', body: JSON.stringify({ instruction }) }),
     output: (id: string, tail = 200) =>
@@ -260,6 +261,12 @@ export const api = {
     getGitHubEvents: () => request<WebhookEvent[]>('/webhooks/github/events'),
     testGitHub: () => request<{ ok: boolean; eventId?: string; taskId?: string; error?: string }>(
       '/webhooks/github/test', { method: 'POST' }),
+    getGitLabConfig: () => request<GitLabWebhookStatus>('/webhooks/gitlab/config'),
+    setGitLabConfig: (config: Record<string, unknown>) =>
+      request('/webhooks/gitlab/config', { method: 'PUT', body: JSON.stringify(config) }),
+    getGitLabEvents: () => request<WebhookEvent[]>('/webhooks/gitlab/events'),
+    testGitLab: () => request<{ ok: boolean; eventId?: string; taskId?: string; error?: string }>(
+      '/webhooks/gitlab/test', { method: 'POST' }),
   },
 }
 

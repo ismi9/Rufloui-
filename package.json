@@ -1,6 +1,6 @@
 {
   "name": "@mario-pb/rufloui",
-  "version": "0.3.2",
+  "version": "0.3.35",
   "description": "React 19 dashboard for claude-flow v3 multi-agent orchestration",
   "repository": {
     "type": "git",
