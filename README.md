@@ -13,7 +13,7 @@ A React 19 web dashboard for [claude-flow v3](https://github.com/ruvnet/claude-f
 - **Task Continuation** — Follow-up on completed/failed tasks with automatic context injection from previous results
 - **Output History** — All task output persisted to disk and viewable across page reloads and server restarts
 - **Multi-Agent Pipeline** — Coordinator plans subtasks, workers execute in dependency waves, results synthesized
-- **Hive Mind** — Consensus protocols, broadcast messaging, and shared memory across agents
+- **Hive Mind** — Consensus protocols, broadcast messaging, and shared memory across agents with automatic cross-task knowledge sharing
 - **Workflows** — Create and manage multi-step execution workflows
 - **Performance** — Benchmarking, latency/throughput charts, bottleneck analysis
 - **Memory Store** — Key-value memory with namespace support and semantic search
@@ -29,7 +29,7 @@ A React 19 web dashboard for [claude-flow v3](https://github.com/ruvnet/claude-f
 |-------|-----------|
 | Frontend | React 19, Vite 6, TypeScript, Zustand, Recharts, Lucide Icons |
 | Backend | Express, WebSocket (ws), Node.js |
-| CLI | [claude-flow v3](https://github.com/ruvnet/claude-flow) (`npx @claude-flow/cli@latest`) |
+| CLI | [claude-flow v3](https://github.com/ruvnet/claude-flow) (`@claude-flow/cli` local binary) |
 | AI | [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) for multi-agent execution |
 
 ## Quick Start
@@ -155,7 +155,8 @@ When a task is assigned to the swarm:
 1. **Planning Phase** — Coordinator agent receives the task with `--max-turns 1` (no tool access), outputs a JSON plan breaking work into subtasks
 2. **Execution Phase** — Each subtask dispatched to the matching specialist agent (researcher, coder, tester, reviewer) with full tool access, respecting dependency order
 3. **Parallel Waves** — Independent subtasks run in parallel; dependent ones wait for prerequisites
-4. **Completion** — Results synthesized, task marked complete, output persisted to disk
+4. **Hive Mind Memory** — Each subtask result stored to shared memory; subsequent tasks receive accumulated knowledge as context
+5. **Completion** — Results synthesized, task marked complete, output persisted to disk
 
 ## Getting Started: Your First Swarm Task
 
@@ -171,7 +172,7 @@ Once the app is running, here's how to go from zero to a working multi-agent swa
 ## Prerequisites
 
 - **Node.js** >= 18
-- **claude-flow CLI** — installed automatically via `npx @claude-flow/cli@latest`
+- **claude-flow CLI** — installed locally via `npm install` (included as dependency)
 - **Claude Code CLI** (optional) — required for multi-agent pipeline execution. [Install guide](https://docs.anthropic.com/en/docs/claude-code)
 
 ## Telegram Bot (Optional)

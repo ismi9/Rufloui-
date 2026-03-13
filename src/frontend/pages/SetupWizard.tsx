@@ -51,6 +51,8 @@ interface Props {
 export default function SetupWizard({ onContinue }: Props) {
   const [result, setResult] = useState<PreflightResult | null>(null)
   const [loading, setLoading] = useState(true)
+  const [fixing, setFixing] = useState(false)
+  const [fixResult, setFixResult] = useState<Array<{ id: string; action: string; success: boolean; detail: string }> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const runChecks = async () => {
@@ -63,6 +65,21 @@ export default function SetupWizard({ onContinue }: Props) {
       setError(err instanceof Error ? err.message : 'Cannot reach backend. Is it running?')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const runAutoFix = async () => {
+    setFixing(true)
+    setFixResult(null)
+    try {
+      const data = await api.system.preflightFix()
+      setFixResult(data.results)
+      // Re-run checks after fix
+      await runChecks()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Auto-fix failed')
+    } finally {
+      setFixing(false)
     }
   }
 
@@ -139,6 +156,30 @@ export default function SetupWizard({ onContinue }: Props) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {result.checks.map(c => <CheckRow key={c.id} check={c} />)}
               </div>
+
+              {/* Fix results */}
+              {fixResult && (
+                <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+                    Auto-fix results
+                  </div>
+                  {fixResult.map(r => (
+                    <div key={r.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                      background: 'var(--bg-secondary)', borderRadius: 'var(--radius)',
+                      border: `1px solid ${r.success ? 'var(--accent-green)' : 'var(--accent-red)'}44`,
+                    }}>
+                      <span style={{ color: r.success ? 'var(--accent-green)' : 'var(--accent-red)', fontSize: 16 }}>
+                        {r.success ? '\u25cf' : '\u2715'}
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{r.action}</span>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>{r.detail}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -150,16 +191,40 @@ export default function SetupWizard({ onContinue }: Props) {
         }}>
           <button
             onClick={runChecks}
-            disabled={loading}
+            disabled={loading || fixing}
             style={{
               padding: '8px 18px', borderRadius: 'var(--radius)', fontSize: 13,
               background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
-              border: '1px solid var(--border)', cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.5 : 1,
+              border: '1px solid var(--border)', cursor: loading || fixing ? 'not-allowed' : 'pointer',
+              opacity: loading || fixing ? 0.5 : 1,
             }}
           >
             Re-check
           </button>
+          {result && (result.failed > 0 || result.warned > 0) && (
+            <button
+              onClick={runAutoFix}
+              disabled={fixing || loading}
+              style={{
+                padding: '8px 18px', borderRadius: 'var(--radius)', fontSize: 13, fontWeight: 600,
+                background: fixing ? 'var(--bg-tertiary)' : 'var(--accent-yellow)',
+                color: fixing ? 'var(--text-secondary)' : '#000',
+                border: 'none',
+                cursor: fixing ? 'not-allowed' : 'pointer',
+                opacity: fixing ? 0.7 : 1,
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              {fixing && (
+                <div style={{
+                  width: 14, height: 14, border: '2px solid rgba(0,0,0,0.2)',
+                  borderTopColor: '#000', borderRadius: '50%',
+                  animation: 'spin 0.8s linear infinite',
+                }} />
+              )}
+              {fixing ? 'Installing...' : 'Auto-fix'}
+            </button>
+          )}
           <button
             onClick={onContinue}
             disabled={!canContinue && !result}

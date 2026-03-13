@@ -1,6 +1,6 @@
 {
   "name": "@mario-pb/rufloui",
-  "version": "0.3.35",
+  "version": "0.3.45",
   "description": "React 19 dashboard for claude-flow v3 multi-agent orchestration",
   "repository": {
     "type": "git",
@@ -21,6 +21,9 @@
     "lint": "eslint src/"
   },
   "dependencies": {
+    "@claude-flow/cli": "^3.5.15",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
     "concurrently": "^9.1.0",
     "cors": "^2.8.5",
     "driver.js": "^1.4.0",
@@ -31,6 +34,7 @@
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.0",
     "recharts": "^2.15.0",
+    "three": "^0.183.2",
     "ws": "^8.18.0",
     "zustand": "^5.0.0"
   },

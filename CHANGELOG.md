@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.45] - 2026-03-13
+
+### Added
+
+- **Hive Mind Shared Memory Integration** — Multi-agent pipeline now reads/writes shared knowledge via hive-mind memory namespace
+  - Phase 1 (Planning): Coordinator loads previous task results as context for better planning
+  - Phase 2 (Execution): Each subtask result stored to hive-mind namespace automatically
+  - Phase 3 (Completion): Final task result persisted for future task context
+  - Shared Memory UI shows all entries with auto-refresh and loading spinner
+- **Setup Wizard Auto-fix** — One-click button to install missing dependencies (claude-flow CLI, etc.)
+- **Local CLI execution** — claude-flow CLI invoked via local `node_modules` binary instead of `npx` (~50x faster, ~2.5s vs 23-90s per call)
+
+### Fixed
+
+- **Hive Mind memory storage** — Fixed shell argument parsing that caused values to be truncated or stored in wrong namespace; now uses `execFileAsync` without shell for reliable storage
+- **Pipeline memory writes** — Added `await` to all `storeHiveMindMemory()` calls to prevent fire-and-forget race conditions
+- **Shared Memory UI** — Fixed key truncation in table format by switching to JSON-based key listing; entries now display with full content
+- **Windows Stop hook** — Fixed `cmd /c` path parsing issue that broke the auto-memory sync hook
+- **Tic Tac Toe cleanup** — Removed accidentally-added game files and nav entry
+
+### Changed
+
+- **Hive Mind Shared Memory panel** — Auto-refreshes on page load, Refresh button shows loading spinner, values truncated to 200 chars with vertical key-value layout
+- **Preflight checks** — Now distinguishes local vs npx CLI installation with appropriate warnings
+
 ## [0.3.2] - 2026-03-12
 
 ### Changed

@@ -82,6 +82,10 @@ export const api = {
     status: () => request('/system/status'),
     reset: () => request('/system/reset', { method: 'POST' }),
     preflight: () => request<PreflightResult>('/system/preflight', { timeout: 60_000 }),
+    preflightFix: () => request<{
+      results: Array<{ id: string; action: string; success: boolean; detail: string }>
+      success: number; failed: number; total: number
+    }>('/system/preflight/fix', { method: 'POST', timeout: 180_000 }),
   },
 
   swarm: {

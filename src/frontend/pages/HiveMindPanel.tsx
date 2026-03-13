@@ -72,20 +72,28 @@ export default function HiveMindPanel() {
   const [broadcastMsg, setBroadcastMsg] = useState('')
   const [broadcastSent, setBroadcastSent] = useState(false)
   const [sharedMemory, setSharedMemory] = useState<Record<string, unknown>>({})
+  const [memoryLoading, setMemoryLoading] = useState(false)
   const [lastConsensusResult, setLastConsensusResult] = useState<{
     topic: string; result: string; votes: Record<string, string>
   } | null>(null)
 
   const isActive = hiveMind?.status === 'active' || hiveMind?.status === 'consensus'
 
+  function refreshMemory() {
+    setMemoryLoading(true)
+    api.hiveMind.memory()
+      .then((data: unknown) => setSharedMemory((data as Record<string, unknown>) || {}))
+      .catch(() => {})
+      .finally(() => setMemoryLoading(false))
+  }
+
   useEffect(() => {
     api.hiveMind.status().then((data: unknown) => setHiveMind(data as Parameters<typeof setHiveMind>[0])).catch(() => {})
   }, [])
 
+  // Auto-fetch shared memory when page loads and hive mind is active
   useEffect(() => {
-    if (isActive) {
-      api.hiveMind.memory().then((data: unknown) => setSharedMemory((data as Record<string, unknown>) || {})).catch(() => {})
-    }
+    if (isActive) refreshMemory()
   }, [isActive])
 
   async function handleInit() {
@@ -336,15 +344,25 @@ export default function HiveMindPanel() {
 
           {/* Shared Memory */}
           <Card title="Shared Memory" actions={
-            <Button size="sm" variant="secondary" onClick={() => {
-              api.hiveMind.memory().then((data: unknown) => setSharedMemory((data as Record<string, unknown>) || {})).catch(() => {})
-            }}>Refresh</Button>
+            <Button size="sm" variant="secondary" onClick={refreshMemory} loading={memoryLoading}>Refresh</Button>
           }>
-            {Object.keys(sharedMemory).length === 0 && <p style={s.empty}>No shared memories</p>}
+            {memoryLoading && Object.keys(sharedMemory).length === 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 0' }}>
+                <div style={{
+                  width: 18, height: 18, border: '2px solid var(--border)',
+                  borderTopColor: 'var(--accent-blue)', borderRadius: '50%',
+                  animation: 'spin 0.8s linear infinite',
+                }} />
+                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading shared memories...</span>
+              </div>
+            )}
+            {!memoryLoading && Object.keys(sharedMemory).length === 0 && <p style={s.empty}>No shared memories</p>}
             {Object.entries(sharedMemory).map(([key, val]) => (
-              <div key={key} style={s.kvRow}>
+              <div key={key} style={{ ...s.kvRow, flexDirection: 'column', gap: 4 }}>
                 <span style={s.kvKey}>{key}</span>
-                <span style={s.kvValue}>{typeof val === 'string' ? val : JSON.stringify(val)}</span>
+                <span style={{ ...s.kvValue, wordBreak: 'break-word', whiteSpace: 'pre-wrap', maxHeight: 60, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 12, color: 'var(--text-secondary)' }}>
+                  {typeof val === 'string' ? val.slice(0, 200) + (String(val).length > 200 ? '...' : '') : JSON.stringify(val).slice(0, 200)}
+                </span>
               </div>
             ))}
           </Card>

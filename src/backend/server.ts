@@ -16,8 +16,10 @@ import { loadGitLabWebhookConfig, saveGitLabWebhookConfig, gitlabWebhookRoutes, 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
 const PORT = Number(process.env.PORT) || 28580
-const CLI = process.env.RUFLO_CLI || 'npx -y @claude-flow/cli@latest'
-const CLI_PARTS = (process.env.RUFLO_CLI || 'npx -y @claude-flow/cli@latest').split(/\s+/)
+const CLI_LOCAL_BIN = path.join(process.cwd(), 'node_modules', '@claude-flow', 'cli', 'bin', 'cli.js')
+const CLI_DEFAULT = fs.existsSync(CLI_LOCAL_BIN) ? `node ${CLI_LOCAL_BIN}` : 'npx -y @claude-flow/cli@latest'
+const CLI = process.env.RUFLO_CLI || CLI_DEFAULT
+const CLI_PARTS = CLI.split(/\s+/)
 const CLI_BIN = CLI_PARTS[0]
 const CLI_BASE_ARGS = CLI_PARTS.slice(1)
 const CLI_TIMEOUT = Number(process.env.RUFLO_CLI_TIMEOUT) || 30_000
@@ -609,19 +611,29 @@ function systemRoutes(): Router {
       checks.push({ id: 'npx', name: 'npx', status: 'fail', detail: 'Not found in PATH', fix: 'Install Node.js (npx is bundled with npm)' })
     }
 
-    // 3. claude-flow CLI
-    try {
-      const { raw } = await execCli('--version', [])
-      checks.push({ id: 'claude-flow', name: 'claude-flow CLI', status: 'ok', detail: raw.trim().slice(0, 80) || 'Installed' })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      checks.push({
-        id: 'claude-flow',
-        name: 'claude-flow CLI',
-        status: 'fail',
-        detail: msg.slice(0, 120),
-        fix: 'Run: npx -y @claude-flow/cli@latest --version',
-      })
+    // 3. claude-flow CLI (prefer local install for speed)
+    {
+      const isLocal = fs.existsSync(CLI_LOCAL_BIN)
+      try {
+        const { raw } = await execCli('--version', [])
+        const source = isLocal ? 'local' : 'npx — slow, run Auto-fix to install locally'
+        checks.push({
+          id: 'claude-flow',
+          name: 'claude-flow CLI',
+          status: isLocal ? 'ok' : 'warn',
+          detail: `${raw.trim().slice(0, 60) || 'Installed'} (${source})`,
+          fix: isLocal ? undefined : 'Run: npm install @claude-flow/cli@latest',
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        checks.push({
+          id: 'claude-flow',
+          name: 'claude-flow CLI',
+          status: 'fail',
+          detail: msg.slice(0, 120),
+          fix: 'Run: npm install @claude-flow/cli@latest',
+        })
+      }
     }
 
     // 4. Claude Code CLI (claude executable)
@@ -653,7 +665,7 @@ function systemRoutes(): Router {
 
     // 6. Port availability (28580 is us, check 28581 for daemon)
     try {
-      await execAsync('npx -y @claude-flow/cli@latest status', { timeout: 15_000 })
+      await execCli('status', [])
       checks.push({ id: 'daemon', name: 'claude-flow daemon', status: 'ok', detail: 'Daemon reachable on port 28581' })
     } catch {
       checks.push({ id: 'daemon', name: 'claude-flow daemon', status: 'warn', detail: 'Daemon not running (will start on first use)', fix: 'The daemon starts automatically when needed' })
@@ -674,6 +686,62 @@ function systemRoutes(): Router {
     const overall = failed > 0 ? 'fail' : warned > 0 ? 'warn' : 'ok'
 
     res.json({ status: overall, checks, failed, warned, passed: checks.length - failed - warned })
+  }))
+
+  // Auto-fix — attempts to install/fix missing dependencies
+  r.post('/preflight/fix', h(async (_req, res) => {
+    const results: Array<{ id: string; action: string; success: boolean; detail: string }> = []
+
+    // 1. claude-flow CLI — install locally for fast invocation
+    if (fs.existsSync(CLI_LOCAL_BIN)) {
+      results.push({ id: 'claude-flow', action: 'Install claude-flow CLI', success: true, detail: 'Already installed locally' })
+    } else {
+      try {
+        await execAsync('npm install @claude-flow/cli@latest', { timeout: 120_000 })
+        results.push({ id: 'claude-flow', action: 'Install claude-flow CLI', success: true, detail: 'Installed locally via npm' })
+      } catch (err) {
+        results.push({ id: 'claude-flow', action: 'Install claude-flow CLI', success: false, detail: (err as Error).message.slice(0, 200) })
+      }
+    }
+
+    // 2. Claude Code CLI — install globally via npm
+    try {
+      await execAsync('claude --version', { timeout: 10_000 })
+      results.push({ id: 'claude-cli', action: 'Claude Code CLI', success: true, detail: 'Already installed' })
+    } catch {
+      try {
+        await execAsync('npm install -g @anthropic-ai/claude-code', { timeout: 120_000 })
+        results.push({ id: 'claude-cli', action: 'Install Claude Code CLI', success: true, detail: 'Installed via npm' })
+      } catch (err) {
+        results.push({ id: 'claude-cli', action: 'Install Claude Code CLI', success: false, detail: (err as Error).message.slice(0, 200) })
+      }
+    }
+
+    // 3. Persistence directory
+    try {
+      ensurePersistDir()
+      results.push({ id: 'persist-dir', action: 'Create .ruflo/ directory', success: true, detail: 'Directory ready' })
+    } catch (err) {
+      results.push({ id: 'persist-dir', action: 'Create .ruflo/ directory', success: false, detail: (err as Error).message.slice(0, 200) })
+    }
+
+    // 4. Start daemon
+    try {
+      await execCli('status', [])
+      results.push({ id: 'daemon', action: 'Start claude-flow daemon', success: true, detail: 'Daemon running' })
+    } catch {
+      try {
+        // Try to start it by running a quick command that triggers daemon startup
+        await execCli('system', ['info'])
+        results.push({ id: 'daemon', action: 'Start claude-flow daemon', success: true, detail: 'Daemon started' })
+      } catch (err) {
+        results.push({ id: 'daemon', action: 'Start claude-flow daemon', success: false, detail: (err as Error).message.slice(0, 200) })
+      }
+    }
+
+    const success = results.filter(r => r.success).length
+    const failed = results.filter(r => !r.success).length
+    res.json({ results, success, failed, total: results.length })
   }))
 
   r.get('/info', h(async (_req, res) => {
@@ -963,8 +1031,10 @@ async function launchWorkflowForTask(taskId: string, title: string, description:
   // If swarm is active with agents, use the multi-agent pipeline
   const activeAgents = getActiveSwarmAgents()
   if (!swarmShutdown && activeAgents.length > 0) {
+    console.log(`[TASK ${taskId}] Multi-agent pipeline with ${activeAgents.length} agents`)
     launchSwarmPipeline(taskId, task, taskDesc, title, wf, workflowId, activeAgents)
   } else {
+    console.log(`[TASK ${taskId}] Single-agent fallback (swarmShutdown=${swarmShutdown}, agents=${activeAgents.length})`)
     // Fallback: single claude -p
     launchViaClaude(taskId, task, taskDesc, title, wf, workflowId)
   }
@@ -975,6 +1045,68 @@ function getActiveSwarmAgents(): Array<{ id: string; name: string; type: string 
   return Array.from(agentRegistry.entries())
     .filter(([key]) => !terminatedAgents.has(key))
     .map(([, reg]) => reg)
+}
+
+// ── HIVE MIND MEMORY HELPERS ────────────────────────────────────────
+const HIVE_MEMORY_NS = 'hive-mind'
+
+async function getHiveMindMemory(): Promise<Record<string, string>> {
+  try {
+    const { raw } = await execCli('memory', ['list', '--namespace', HIVE_MEMORY_NS, '--format', 'json'])
+    // Parse JSON array of entries to get full keys
+    let items: Array<{ key: string; namespace?: string }> = []
+    try {
+      const parsed = JSON.parse(raw)
+      items = Array.isArray(parsed) ? parsed : []
+    } catch {
+      // Fallback: extract keys from table format
+      for (const line of raw.replace(/\r/g, '').split('\n')) {
+        const m = line.match(/\|\s*(\S+)\s*\|\s*hive-mind\s*\|/)
+        if (m) items.push({ key: m[1] })
+      }
+    }
+    if (items.length === 0) return {}
+
+    // Retrieve each key's value (without shell to handle special chars in keys)
+    const entries: Record<string, string> = {}
+    await Promise.all(items.map(async (item) => {
+      try {
+        const { stdout } = await execFileAsync(
+          CLI_BIN,
+          [...CLI_BASE_ARGS, 'memory', 'retrieve', '--namespace', HIVE_MEMORY_NS, '-k', item.key],
+          { timeout: CLI_TIMEOUT, encoding: 'utf-8', windowsHide: true },
+        )
+        // Extract value from CLI output
+        const valMatch = stdout.match(/Value:\s*\n([\s\S]*?)(?:\n\+|$)/)
+        if (valMatch) {
+          entries[item.key] = valMatch[1].replace(/\|\s*/g, '').trim()
+        } else {
+          const lines = stdout.split('\n')
+          const valIdx = lines.findIndex(l => l.includes('Value:'))
+          if (valIdx >= 0 && valIdx + 1 < lines.length) {
+            entries[item.key] = lines.slice(valIdx + 1).map(l => l.replace(/^\|\s*/, '').replace(/\s*\|$/, '')).join(' ').replace(/\+-+\+/g, '').trim()
+          }
+        }
+      } catch { /* skip unreadable key */ }
+    }))
+    return entries
+  } catch { return {} }
+}
+
+async function storeHiveMindMemory(key: string, value: string): Promise<void> {
+  try {
+    // Sanitize: strip shell-special chars and double-quotes, then wrap in double-quotes for shell
+    const safeValue = value.replace(/[`|$\\"'\n\r*?<>(){}[\]!#&;^~]/g, '').replace(/\s+/g, ' ').trim().slice(0, 300)
+    // Use execFileAsync directly (without shell) to avoid argument splitting
+    const { stdout } = await execFileAsync(
+      CLI_BIN,
+      [...CLI_BASE_ARGS, 'memory', 'store', '--namespace', HIVE_MEMORY_NS, '-k', key, '-v', safeValue],
+      { timeout: CLI_TIMEOUT, encoding: 'utf-8', windowsHide: true },
+    )
+    console.log(`[HiveMind] Stored "${key}" (${safeValue.length}B)`)
+  } catch (err) {
+    console.error(`[HiveMind] Store FAILED for key="${key}":`, err instanceof Error ? err.message : String(err))
+  }
 }
 
 // ── MULTI-AGENT PIPELINE ─────────────────────────────────────────────
@@ -1109,6 +1241,15 @@ async function launchSwarmPipeline(
     broadcast('workflow:updated', wf)
     broadcast('task:output', { id: taskId, workflowId, type: 'text', content: '[Phase 1] Coordinator planning subtasks...' })
 
+    // Read hive mind shared memory for cross-task context
+    const hiveMindCtx = await getHiveMindMemory()
+    const hiveMindContext = Object.keys(hiveMindCtx).length > 0
+      ? `\n\nSHARED KNOWLEDGE (from previous tasks via Hive Mind):\n${Object.entries(hiveMindCtx).map(([k, v]) => `- ${k}: ${String(v).slice(0, 200)}`).join('\n')}`
+      : ''
+    if (Object.keys(hiveMindCtx).length > 0) {
+      broadcast('task:output', { id: taskId, workflowId, type: 'text', content: `[Hive Mind] Loaded ${Object.keys(hiveMindCtx).length} shared memories as context` })
+    }
+
     const roleInstructions: Record<string, string> = {
       researcher: 'RESEARCH phase: explore the codebase, find relevant files, understand existing patterns and dependencies',
       coder: 'IMPLEMENTATION phase: write/edit code, create files, run build commands',
@@ -1125,6 +1266,7 @@ async function launchSwarmPipeline(
       ...workerTypes.map(t => `- ${t}: ${roleInstructions[t] || 'specialist agent'}`),
       '',
       `TASK: ${taskDesc}`,
+      hiveMindContext,
       '',
       `RULES:`,
       `1. You MUST use MULTIPLE agent types — do NOT assign everything to a single agent`,
@@ -1221,6 +1363,12 @@ async function launchSwarmPipeline(
             results[st.idx] = await runClaude(agentPrompt, sysPrompt, agent.id)
             const step = wf.steps.find(s => s.id === stepId)
             if (step) step.status = 'completed'
+            // Store agent findings in hive mind shared memory
+            // Store subtask result to hive mind
+            await storeHiveMindMemory(
+              `task-${taskId}-${st.agent}-${st.idx}`,
+              results[st.idx].slice(0, 300),
+            )
           } catch (err) {
             results[st.idx] = `Error: ${err instanceof Error ? err.message : String(err)}`
             const step = wf.steps.find(s => s.id === stepId)
@@ -1242,6 +1390,9 @@ async function launchSwarmPipeline(
     wf.status = 'completed'
     wf.completedAt = task.completedAt
     wf.result = task.result
+    // Persist final result to hive mind shared memory
+    // Persist final result to hive mind
+    await storeHiveMindMemory(`task-result-${taskId}`, `${title}: ${(task.result || '').slice(0, 500)}`)
     broadcast('task:updated', { ...task, id: taskId })
     broadcast('workflow:updated', wf)
     broadcast('task:output', { id: taskId, workflowId, type: 'done', code: 0 })
@@ -2365,9 +2516,35 @@ function hiveMindRoutes(): Router {
   }))
   r.get('/memory', h(async (_req, res) => {
     try {
-      const { raw } = await execCli('hive-mind', ['memory'])
-      res.json({ raw, ...parseCliOutput(raw) as object })
-    } catch { res.json({ memories: {} }) }
+      // Merge hive-mind internal memory + pipeline entries from memory store namespace
+      const [hiveMem, storeMem] = await Promise.allSettled([
+        execCli('hive-mind', ['memory']),
+        getHiveMindMemory(),
+      ])
+      const result: Record<string, unknown> = {}
+      // Parse internal hive-mind memory (broadcasts etc.)
+      if (hiveMem.status === 'fulfilled') {
+        const raw = hiveMem.value.raw
+        // Extract key-value pairs from "Shared Memory" output
+        const lines = raw.split('\n')
+        for (const line of lines) {
+          const m = line.match(/^\s*-\s*(\S+)\s*[:=]\s*(.+)/)
+          if (m) result[`hive:${m[1]}`] = m[2].trim()
+        }
+        // If no key-value pairs found, store the summary
+        if (Object.keys(result).length === 0 && raw.includes('Shared Memory')) {
+          const countMatch = raw.match(/\((\d+)\s*keys?\)/)
+          if (countMatch) result['hive:internal'] = `${countMatch[1]} broadcast key(s)`
+        }
+      }
+      // Add pipeline memory store entries (these have actual content)
+      if (storeMem.status === 'fulfilled') {
+        for (const [key, val] of Object.entries(storeMem.value)) {
+          result[key] = val
+        }
+      }
+      res.json(result)
+    } catch { res.json({}) }
   }))
   r.post('/shutdown', h(async (_req, res) => {
     const { raw } = await execCli('hive-mind', ['shutdown'])

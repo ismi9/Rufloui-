@@ -273,7 +273,7 @@ export function Layout() {
   return (
     <div style={styles.wrapper}>
       <aside style={styles.sidebar}>
-        <div style={styles.logo}>RuFloUI <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', letterSpacing: 0 }}>v0.2.0</span></div>
+        <div style={styles.logo}>RuFloUI <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', letterSpacing: 0 }}>v0.3.45</span></div>
         <nav style={styles.nav}>
           {navGroups.map((group) => (
             <div key={group.title}>
