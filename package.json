@@ -21,7 +21,7 @@
     "lint": "eslint src/"
   },
   "dependencies": {
-    "@claude-flow/cli": "^3.5.15",
+    "@claude-flow/cli": "^3.21.1",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "concurrently": "^9.1.0",
