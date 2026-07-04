@@ -3407,6 +3407,20 @@ function gracefulShutdown() {
 process.on('SIGINT', gracefulShutdown)
 process.on('SIGTERM', gracefulShutdown)
 
+
+// --- Serve frontend static files (for production / Railway) ---
+const distDir = path.join(process.cwd(), 'dist')
+if (fs.existsSync(distDir)) {
+  app.use(express.static(distDir))
+  // SPA fallback: serve index.html for any non-API route
+  app.get('*', (req: Request, res: Response) => {
+    if (!req.path.startsWith('/api') && !req.path.startsWith('/ws')) {
+      res.sendFile(path.join(distDir, 'index.html'))
+    }
+  })
+  console.log(`Serving frontend from ${distDir}`)
+}
+
 server.listen(PORT, async () => {
   console.log(`RuFloUI API server running on http://localhost:${PORT}`)
   console.log(`WebSocket available at ws://localhost:${PORT}/ws`)
