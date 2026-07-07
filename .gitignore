@@ -10,6 +10,7 @@ tsconfig.tsbuildinfo
 
 # Runtime / orchestration state
 .claude/
+!.claude/skills/
 .claude-flow/
 .ruflo/
 .swarm/
